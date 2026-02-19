@@ -1,0 +1,17 @@
+evm:
+  rpc_url: "https://eth.llamarpc.com"
+  chain_id: 1
+  start_block: 0
+
+storage:
+  uri: "mongodb://localhost:27017"  # or use host/port/user/password
+  host: localhost
+  port: 27017
+  database: indexing
+  user: ""
+  password: ""
+
+pipeline:
+  batch_size: 100
+  worker_count: 4
+  buffer_size: 1000
