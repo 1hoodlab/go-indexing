@@ -2,9 +2,9 @@ package storage
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/1hoodlab/go-indexing.git/internal/config"
+	"github.com/1hoodlab/go-indexing.git/internal/models"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -17,21 +17,7 @@ type MongoDB struct {
 
 // NewMongoDB creates a new MongoDB connection.
 func NewMongoDB(cfg *config.StorageConfig) (*MongoDB, error) {
-	uri := cfg.URI
-	if uri == "" {
-		port := cfg.Port
-		if port == 0 {
-			port = 27017
-		}
-		if cfg.User != "" {
-			uri = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s",
-				cfg.User, cfg.Password, cfg.Host, port, cfg.Database)
-		} else {
-			uri = fmt.Sprintf("mongodb://%s:%d/%s", cfg.Host, port, cfg.Database)
-		}
-	}
-
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))
+	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(cfg.URI))
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +35,21 @@ func NewMongoDB(cfg *config.StorageConfig) (*MongoDB, error) {
 // Database returns the database for direct collection access.
 func (m *MongoDB) Database() *mongo.Database {
 	return m.database
+}
+
+// Networks returns the networks collection.
+func (m *MongoDB) Networks() *mongo.Collection {
+	return m.database.Collection(models.Network{}.CollectionName())
+}
+
+// Contracts returns the contracts collection.
+func (m *MongoDB) Contracts() *mongo.Collection {
+	return m.database.Collection(models.Contract{}.CollectionName())
+}
+
+// Logs returns the logs collection.
+func (m *MongoDB) Logs() *mongo.Collection {
+	return m.database.Collection(models.Log{}.CollectionName())
 }
 
 // Close closes the MongoDB connection.

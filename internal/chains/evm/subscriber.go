@@ -27,21 +27,42 @@ func NewSubscriber(client *Client) *Subscriber {
 const PollInterval = 12 * time.Second
 
 // SubscribeBlocks subscribes to new blocks and sends them to the given channel.
+// Uses startBlock if > 0; otherwise starts from latest. Backfills from startBlock to latest first.
 func (s *Subscriber) SubscribeBlocks(ctx context.Context, out chan<- *BlockEvent) error {
-	// Poll-based subscription (replace with websocket subscription when supported)
+	return s.SubscribeBlocksFrom(ctx, 0, out)
+}
+
+// SubscribeBlocksFrom subscribes from startBlock (backfill to latest, then poll for new).
+func (s *Subscriber) SubscribeBlocksFrom(ctx context.Context, startBlock uint64, out chan<- *BlockEvent) error {
 	header, err := s.client.HeaderByNumber(ctx, nil)
 	if err != nil {
 		return err
 	}
 
-	start := header.Number.Uint64()
+	latest := header.Number.Uint64()
+	start := startBlock
+	if startBlock == 0 {
+		start = latest
+	}
 
+	// Backfill: emit blocks from start to latest (inclusive)
+	for start <= latest {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		out <- &BlockEvent{Number: big.NewInt(int64(start))}
+		start++
+	}
+
+	// Live: poll for new blocks
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			header, err := s.client.HeaderByNumber(ctx, big.NewInt(int64(start)))
+			header, err = s.client.HeaderByNumber(ctx, big.NewInt(int64(start)))
 			if err != nil {
 				// Block not mined yet ("not found") — wait and retry
 				if strings.Contains(strings.ToLower(err.Error()), "not found") {
@@ -55,7 +76,7 @@ func (s *Subscriber) SubscribeBlocks(ctx context.Context, out chan<- *BlockEvent
 				return err
 			}
 			if header != nil {
-				out <- &BlockEvent{Number: header.Number}
+				out <- &BlockEvent{Number: big.NewInt(int64(start))}
 				start++
 			}
 		}

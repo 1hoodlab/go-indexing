@@ -4,6 +4,8 @@ import (
 	"context"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
@@ -35,4 +37,14 @@ func (c *Client) BlockByNumber(ctx context.Context, number *big.Int) (*types.Blo
 // HeaderByNumber fetches block header by number.
 func (c *Client) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
 	return c.Client.HeaderByNumber(ctx, number)
+}
+
+// FilterLogs fetches logs for the given block range and contract addresses.
+func (c *Client) FilterLogs(ctx context.Context, fromBlock, toBlock *big.Int, addresses []common.Address) ([]types.Log, error) {
+	query := ethereum.FilterQuery{
+		FromBlock: fromBlock,
+		ToBlock:   toBlock,
+		Addresses: addresses,
+	}
+	return c.Client.FilterLogs(ctx, query)
 }

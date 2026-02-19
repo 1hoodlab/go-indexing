@@ -6,20 +6,17 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/1hoodlab/go-indexing.git/internal/config"
 	"github.com/1hoodlab/go-indexing.git/internal/pipeline"
 )
 
 func main() {
-	cfg, err := config.Load("config.yaml")
-	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
-	}
-
-	p, err := pipeline.New(cfg)
+	p, err := pipeline.New()
 	if err != nil {
 		log.Fatalf("failed to create pipeline: %v", err)
 	}
+
+	// Register custom handler for MemberAdded events
+	p.RegisterMemberAdded()
 
 	if err := p.Start(); err != nil {
 		log.Fatalf("failed to start pipeline: %v", err)
