@@ -3,7 +3,9 @@ package evm
 import (
 	"context"
 	"math/big"
+	"strings"
 	"sync"
+	"time"
 )
 
 // BlockEvent represents a new block to be processed.
@@ -21,6 +23,9 @@ func NewSubscriber(client *Client) *Subscriber {
 	return &Subscriber{client: client}
 }
 
+// PollInterval is the delay between RPC polls when waiting for next block.
+const PollInterval = 12 * time.Second
+
 // SubscribeBlocks subscribes to new blocks and sends them to the given channel.
 func (s *Subscriber) SubscribeBlocks(ctx context.Context, out chan<- *BlockEvent) error {
 	// Poll-based subscription (replace with websocket subscription when supported)
@@ -30,6 +35,7 @@ func (s *Subscriber) SubscribeBlocks(ctx context.Context, out chan<- *BlockEvent
 	}
 
 	start := header.Number.Uint64()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -37,6 +43,15 @@ func (s *Subscriber) SubscribeBlocks(ctx context.Context, out chan<- *BlockEvent
 		default:
 			header, err := s.client.HeaderByNumber(ctx, big.NewInt(int64(start)))
 			if err != nil {
+				// Block not mined yet ("not found") — wait and retry
+				if strings.Contains(strings.ToLower(err.Error()), "not found") {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(PollInterval):
+					}
+					continue
+				}
 				return err
 			}
 			if header != nil {
