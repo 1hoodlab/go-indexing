@@ -36,9 +36,9 @@ func (p *Pipeline) Registry() *handlers.Registry {
 	return p.registry
 }
 
-// RegisterMemberAdded registers a handler for MemberAdded(address,uint8,uint256,uint256).
-func (p *Pipeline) RegisterMemberAdded() {
-	p.registry.Register("MemberAdded(address,uint8,uint256,uint256)", handlers.MemberAdded(p.store))
+// Store returns the MongoDB store for use when constructing handlers.
+func (p *Pipeline) Store() *storage.MongoDB {
+	return p.store
 }
 
 // New creates a new pipeline. Loads networks and contracts from MongoDB schema.

@@ -8,6 +8,17 @@ import (
 	"github.com/1hoodlab/go-indexing.git/pkg/utils"
 )
 
+// HandlerEntry pairs a canonical event signature with its handler.
+type HandlerEntry struct {
+	Signature string // Canonical format: EventName(type1,type2,...)
+	Handler   Handler
+}
+
+// Entry creates a HandlerEntry for convenience.
+func Entry(signature string, h Handler) HandlerEntry {
+	return HandlerEntry{Signature: signature, Handler: h}
+}
+
 // Registry holds registered event handlers. Key is topic0 (event signature hash).
 type Registry struct {
 	mu        sync.RWMutex
@@ -33,6 +44,16 @@ func (r *Registry) Register(canonical string, h Handler) {
 	defer r.mu.Unlock()
 	topic0 := utils.EventTopic0(canonical)
 	r.handlers[topic0] = h
+}
+
+// RegisterAll registers multiple handlers in one call.
+func (r *Registry) RegisterAll(entries ...HandlerEntry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range entries {
+		topic0 := utils.EventTopic0(e.Signature)
+		r.handlers[topic0] = e.Handler
+	}
 }
 
 // RegisterByTopic0 registers a handler by raw topic0 hash (0x-prefixed hex).

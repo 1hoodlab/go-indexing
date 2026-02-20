@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/1hoodlab/go-indexing.git/internal/handlers"
 	"github.com/1hoodlab/go-indexing.git/internal/pipeline"
 )
 
@@ -15,8 +16,10 @@ func main() {
 		log.Fatalf("failed to create pipeline: %v", err)
 	}
 
-	// Register custom handler for MemberAdded events
-	p.RegisterMemberAdded()
+	// Register custom event handlers
+	p.Registry().RegisterAll(
+		handlers.Entry("MemberAdded(address,uint8,uint256,uint256)", handlers.MemberAdded(p.Store())),
+	)
 
 	if err := p.Start(); err != nil {
 		log.Fatalf("failed to start pipeline: %v", err)
