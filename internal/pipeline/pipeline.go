@@ -142,7 +142,7 @@ func (p *Pipeline) Stop() {
 func (p *Pipeline) processBlocks() {
 	defer p.wg.Done()
 
-	ctx := context.Background()
+	ctx := p.ctx
 	for ev := range p.blockCh {
 		if ev == nil {
 			continue
