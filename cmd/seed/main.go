@@ -111,15 +111,15 @@ func main() {
 	contractFilter := bson.M{"network_id": net.ID, "address": addr}
 	contractUpdate := bson.M{
 		"$set": bson.M{
-			"abi":                string(abiMinified),
-			"events":             contractEvents,
-			"start_block":        contractStartBlock,
-			"last_scanned_block": 0,
-			"status":             models.StatusActive,
-			"updated_at":         now,
+			"abi":        string(abiMinified),
+			"events":     contractEvents,
+			"status":     models.StatusActive,
+			"updated_at": now,
 		},
 		"$setOnInsert": bson.M{
-			"created_at": now,
+			"start_block":        contractStartBlock,
+			"last_scanned_block": 0,
+			"created_at":         now,
 		},
 	}
 	contractOpts := options.Update().SetUpsert(true)
