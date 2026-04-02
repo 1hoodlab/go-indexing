@@ -38,13 +38,13 @@ type RawEvent struct {
     Metadata        map[string]string // chain-specific extra fields
 }
 
-// ContractConfig - contract/program to index
+// ContractConfig - chain-agnostic contract/program reference for pipeline use.
+// Each chain's StorageInterface.LoadContracts() maps its own Contract model to this.
 type ContractConfig struct {
-    Address      string
-    Events       []string // event identifiers to filter
-    ABIOrIDL     string   // ABI (EVM/Tron), Anchor IDL (Solana), or Move ABI (Sui)
-    StartBlock   uint64
-    LastScanned  uint64
+    Address     string   // contract address / program ID / package_id
+    Events      []string // event identifiers to filter
+    StartBlock  uint64   // start block / slot / checkpoint
+    LastScanned uint64   // last scanned block / slot / checkpoint
 }
 ```
 
@@ -410,24 +410,70 @@ type Network struct {
 }
 ```
 
-### Contract Model (generic)
+### Contract Models (per chain)
+
+Each chain has its own Contract model in its package, with only the fields relevant to that chain:
 
 ```go
+// chains/evm/models.go
 type Contract struct {
     ID               primitive.ObjectID `bson:"_id,omitempty"`
     NetworkID        primitive.ObjectID `bson:"network_id"`
-    Address          string             `bson:"address"`            // format depends on chain
+    Address          string             `bson:"address"`           // 0x hex
+    ABI              string             `bson:"abi"`               // Solidity ABI JSON
     Events           []string           `bson:"events"`
-    ABI              string             `bson:"abi,omitempty"`      // EVM, Tron
-    IDL              string             `bson:"idl,omitempty"`      // Solana (Anchor)
-    MoveABI          string             `bson:"move_abi,omitempty"` // Sui
     StartBlock       uint64             `bson:"start_block"`
     LastScannedBlock uint64             `bson:"last_scanned_block"`
     Status           NetworkStatus      `bson:"status"`
     CreatedAt        time.Time          `bson:"created_at"`
     UpdatedAt        time.Time          `bson:"updated_at"`
 }
+
+// chains/solana/models.go
+type Contract struct {
+    ID               primitive.ObjectID `bson:"_id,omitempty"`
+    NetworkID        primitive.ObjectID `bson:"network_id"`
+    Address          string             `bson:"address"`           // Base58 program ID
+    IDL              string             `bson:"idl"`               // Anchor IDL JSON
+    Events           []string           `bson:"events"`
+    StartSlot        uint64             `bson:"start_slot"`
+    LastScannedSlot  uint64             `bson:"last_scanned_slot"`
+    Status           NetworkStatus      `bson:"status"`
+    CreatedAt        time.Time          `bson:"created_at"`
+    UpdatedAt        time.Time          `bson:"updated_at"`
+}
+
+// chains/tron/models.go
+type Contract struct {
+    ID               primitive.ObjectID `bson:"_id,omitempty"`
+    NetworkID        primitive.ObjectID `bson:"network_id"`
+    Address          string             `bson:"address"`           // Base58Check
+    ABI              string             `bson:"abi"`               // Solidity ABI JSON
+    Events           []string           `bson:"events"`
+    StartBlock       uint64             `bson:"start_block"`
+    LastScannedBlock uint64             `bson:"last_scanned_block"`
+    Status           NetworkStatus      `bson:"status"`
+    CreatedAt        time.Time          `bson:"created_at"`
+    UpdatedAt        time.Time          `bson:"updated_at"`
+}
+
+// chains/sui/models.go
+type Contract struct {
+    ID                   primitive.ObjectID `bson:"_id,omitempty"`
+    NetworkID            primitive.ObjectID `bson:"network_id"`
+    PackageID            string             `bson:"package_id"`        // 0x hex
+    Module               string             `bson:"module"`
+    MoveABI              string             `bson:"move_abi"`          // Move ABI
+    Events               []string           `bson:"events"`
+    StartCheckpoint      uint64             `bson:"start_checkpoint"`
+    LastScannedCheckpoint uint64            `bson:"last_scanned_checkpoint"`
+    Status               NetworkStatus      `bson:"status"`
+    CreatedAt            time.Time          `bson:"created_at"`
+    UpdatedAt            time.Time          `bson:"updated_at"`
+}
 ```
+
+This approach lets each chain use domain-specific field names (`start_slot` vs `start_block` vs `start_checkpoint`, `address` vs `package_id`) instead of forcing generic terminology.
 
 ## 5. Error Handling, Resilience & Testing
 
