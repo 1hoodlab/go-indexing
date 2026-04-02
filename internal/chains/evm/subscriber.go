@@ -52,7 +52,7 @@ func (s *Subscriber) SubscribeBlocksFrom(ctx context.Context, startBlock uint64,
 			return ctx.Err()
 		default:
 		}
-		out <- &BlockEvent{Number: big.NewInt(int64(start))}
+		out <- &BlockEvent{Number: new(big.Int).SetUint64(start)}
 		start++
 	}
 
@@ -62,7 +62,7 @@ func (s *Subscriber) SubscribeBlocksFrom(ctx context.Context, startBlock uint64,
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			header, err = s.client.HeaderByNumber(ctx, big.NewInt(int64(start)))
+			header, err = s.client.HeaderByNumber(ctx, new(big.Int).SetUint64(start))
 			if err != nil {
 				// Block not mined yet ("not found") — wait and retry
 				if strings.Contains(strings.ToLower(err.Error()), "not found") {
@@ -76,7 +76,7 @@ func (s *Subscriber) SubscribeBlocksFrom(ctx context.Context, startBlock uint64,
 				return err
 			}
 			if header != nil {
-				out <- &BlockEvent{Number: big.NewInt(int64(start))}
+				out <- &BlockEvent{Number: new(big.Int).SetUint64(start)}
 				start++
 			}
 		}
