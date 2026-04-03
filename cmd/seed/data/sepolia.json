@@ -1,0 +1,39 @@
+{
+  "network": {
+    "name": "Sepolia",
+    "chain_type": "evm",
+    "chain_id": 11155111,
+    "rpc_urls": [
+      "https://ethereum-sepolia-rpc.publicnode.com",
+      "https://rpc.sepolia.org",
+      "https://rpc2.sepolia.org",
+      "https://rpc.sepolia.online",
+      "https://rpc-sepolia.rockx.com",
+      "https://rpc.bordel.wtf/sepolia"
+    ],
+    "type": "testnet",
+    "status": "active"
+  },
+  "contracts": [
+    {
+      "address": "0xf2363e51a4bb4872f38576508256bbcfabb7348",
+      "abi": [{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"by","type":"address"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"EmergencyPaused","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"by","type":"address"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"EmergencyUnpaused","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"FundsDeposited","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"to","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"proposalId","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"FundsWithdrawn","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"member","type":"address"},{"indexed":false,"internalType":"uint8","name":"role","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"votingPower","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"MemberAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"member","type":"address"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"MemberRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"member","type":"address"},{"indexed":false,"internalType":"uint8","name":"oldRole","type":"uint8"},{"indexed":false,"internalType":"uint8","name":"newRole","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"MemberRoleChanged","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"proposalId","type":"uint256"},{"indexed":true,"internalType":"address","name":"cancelledBy","type":"address"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"ProposalCancelled","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"proposalId","type":"uint256"},{"indexed":true,"internalType":"address","name":"proposer","type":"address"},{"indexed":false,"internalType":"string","name":"title","type":"string"},{"indexed":false,"internalType":"uint256","name":"startTime","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"endTime","type":"uint256"}],"name":"ProposalCreated","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"proposalId","type":"uint256"},{"indexed":true,"internalType":"address","name":"executor","type":"address"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"ProposalExecuted","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"proposalId","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"totalVotes","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"QuorumReached","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"proposalId","type":"uint256"},{"indexed":true,"internalType":"address","name":"voter","type":"address"},{"indexed":false,"internalType":"uint8","name":"voteType","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"votingPower","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"VoteCast","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"delegator","type":"address"},{"indexed":true,"internalType":"address","name":"delegatee","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"VotingPowerDelegated","type":"event"}],
+      "events": [
+        "EmergencyPaused(address,uint256)",
+        "EmergencyUnpaused(address,uint256)",
+        "FundsDeposited(address,uint256,uint256)",
+        "FundsWithdrawn(address,uint256,uint256,uint256)",
+        "MemberAdded(address,uint8,uint256,uint256)",
+        "MemberRemoved(address,uint256)",
+        "MemberRoleChanged(address,uint8,uint8,uint256)",
+        "ProposalCancelled(uint256,address,uint256)",
+        "ProposalCreated(uint256,address,string,uint256,uint256)",
+        "ProposalExecuted(uint256,address,uint256)",
+        "QuorumReached(uint256,uint256,uint256)",
+        "VoteCast(uint256,address,uint8,uint256,uint256)",
+        "VotingPowerDelegated(address,address,uint256,uint256)"
+      ],
+      "start_block": 10293841
+    }
+  ]
+}
