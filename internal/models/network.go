@@ -25,8 +25,9 @@ const (
 // Network stores blockchain network config: RPCs, type, and status.
 type Network struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
-	Name      string              `bson:"name"`
-	ChainID   int64               `bson:"chain_id"`
+	Name      string             `bson:"name"`
+	ChainType string             `bson:"chain_type"`
+	ChainID   int64              `bson:"chain_id"`
 	Type      NetworkType         `bson:"type"`
 	RPCURLs   []string            `bson:"rpc_urls"`
 	Status    NetworkStatus       `bson:"status"`
