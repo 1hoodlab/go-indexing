@@ -50,6 +50,9 @@ func (m *mockStorage) UpdateScanProgress(ctx context.Context, address string, bl
 func (m *mockStorage) LoadContracts(ctx context.Context) ([]core.ContractConfig, error) {
 	return nil, nil
 }
+func (m *mockStorage) SaveDecodedEvents(ctx context.Context, events []interface{}) error {
+	return nil
+}
 func (m *mockStorage) EnsureIndexes(ctx context.Context) error { return nil }
 func (m *mockStorage) Close(ctx context.Context) error         { return nil }
 

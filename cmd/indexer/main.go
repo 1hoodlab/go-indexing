@@ -68,14 +68,8 @@ func runEVM(cfg config.Config) {
 
 	subscriber := evm.NewSubscriber(pool, cfg.PollInterval)
 	fetcher := evm.NewLogFetcher(pool, networkID, contractModels)
-	parser := evm.NewEventParser()
 
 	registry := core.NewRegistry(handlers.SaveToLogs(store))
-
-	registry.Register(
-		parser.EventKey("MemberAdded(address,uint8,uint256,uint256)"),
-		handlers.MemberAdded(store),
-	)
 
 	p := pipeline.New(cfg.ChainName, subscriber, fetcher, registry, store, contracts)
 	if err := p.Start(); err != nil {
