@@ -9,11 +9,11 @@ import (
 )
 
 type Subscriber struct {
-	client       *Client
+	client       RPCClient
 	pollInterval time.Duration
 }
 
-func NewSubscriber(client *Client, pollInterval time.Duration) *Subscriber {
+func NewSubscriber(client RPCClient, pollInterval time.Duration) *Subscriber {
 	return &Subscriber{client: client, pollInterval: pollInterval}
 }
 

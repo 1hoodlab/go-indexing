@@ -12,7 +12,7 @@ import (
 )
 
 type LogFetcher struct {
-	client      *Client
+	client      RPCClient
 	networkID   string
 	contractMap map[string]contractInfo
 }
@@ -22,7 +22,7 @@ type contractInfo struct {
 	abi string
 }
 
-func NewLogFetcher(client *Client, networkID string, contracts []*Contract) *LogFetcher {
+func NewLogFetcher(client RPCClient, networkID string, contracts []*Contract) *LogFetcher {
 	cm := make(map[string]contractInfo, len(contracts))
 	for _, c := range contracts {
 		cm[strings.ToLower(c.Address)] = contractInfo{id: c.ID.Hex(), abi: c.ABI}
