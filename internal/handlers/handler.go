@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"context"
-
-	"github.com/1hoodlab/go-indexing.git/internal/models"
+	"github.com/1hoodlab/go-indexing.git/internal/core"
 )
 
-// Handler processes a batch of logs of the same event type.
-type Handler func(ctx context.Context, batch []*models.Log) error
+// Handler is an alias for core.Handler for convenience.
+type Handler = core.Handler
