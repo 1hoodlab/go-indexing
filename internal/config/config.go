@@ -3,12 +3,13 @@ package config
 import (
 	"os"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
 	ChainType    string
 	ChainName    string
-	RPCURL       string
 	PollInterval time.Duration
 	MongoURI     string
 	Database     string
@@ -22,6 +23,9 @@ var defaultPollIntervals = map[string]time.Duration{
 }
 
 func Load() Config {
+	// Load .env file if present (silently ignore if not found)
+	godotenv.Load()
+
 	chainType := getenv("CHAIN_TYPE", "evm")
 
 	pollInterval := defaultPollIntervals[chainType]
@@ -34,7 +38,6 @@ func Load() Config {
 	return Config{
 		ChainType:    chainType,
 		ChainName:    getenv("CHAIN_NAME", chainType),
-		RPCURL:       os.Getenv("RPC_URL"),
 		PollInterval: pollInterval,
 		MongoURI:     getenv("MONGODB_URI", "mongodb://localhost:27017"),
 		Database:     getenv("MONGODB_DATABASE", "indexing"),
