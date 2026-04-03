@@ -107,6 +107,16 @@ func (s *Storage) LoadContracts(ctx context.Context) ([]core.ContractConfig, err
 	return configs, nil
 }
 
+// LoadNetwork loads the first active network from the database.
+func (s *Storage) LoadNetwork(ctx context.Context) (*models.Network, error) {
+	var network models.Network
+	err := s.Networks().FindOne(ctx, bson.M{"status": models.StatusActive}).Decode(&network)
+	if err != nil {
+		return nil, err
+	}
+	return &network, nil
+}
+
 func (s *Storage) LoadContractModels(ctx context.Context) ([]*Contract, error) {
 	cursor, err := s.Contracts().Find(ctx, bson.M{"status": models.StatusActive})
 	if err != nil {

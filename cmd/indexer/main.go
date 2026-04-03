@@ -49,20 +49,25 @@ func runEVM(cfg config.Config) {
 		log.Fatalf("failed to load contract models: %v", err)
 	}
 
-	networkID := contractModels[0].NetworkID.Hex()
-
-	rpcURL := cfg.RPCURL
-	if rpcURL == "" {
-		log.Fatal("RPC_URL environment variable is required")
-	}
-
-	client, err := evm.NewClient(rpcURL)
+	// Load network from DB (contains RPC URLs)
+	network, err := store.LoadNetwork(context.Background())
 	if err != nil {
-		log.Fatalf("failed to create EVM client: %v", err)
+		log.Fatalf("failed to load network: %v", err)
+	}
+	if len(network.RPCURLs) == 0 {
+		log.Fatal("network has no RPC URLs configured in database")
 	}
 
-	subscriber := evm.NewSubscriber(client, cfg.PollInterval)
-	fetcher := evm.NewLogFetcher(client, networkID, contractModels)
+	networkID := network.ID.Hex()
+
+	// Create RPC pool with fallback
+	pool, err := evm.NewRPCPool(network.RPCURLs)
+	if err != nil {
+		log.Fatalf("failed to create RPC pool: %v", err)
+	}
+
+	subscriber := evm.NewSubscriber(pool, cfg.PollInterval)
+	fetcher := evm.NewLogFetcher(pool, networkID, contractModels)
 	parser := evm.NewEventParser()
 
 	registry := core.NewRegistry(handlers.SaveToLogs(store))
@@ -78,7 +83,7 @@ func runEVM(cfg config.Config) {
 	}
 	defer p.Stop()
 
-	log.Printf("[%s] blockchain indexer started (chain_type=%s)", cfg.ChainName, cfg.ChainType)
+	log.Printf("[%s] blockchain indexer started (chain_type=%s, rpc=%s)", cfg.ChainName, cfg.ChainType, pool.ActiveURL())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
