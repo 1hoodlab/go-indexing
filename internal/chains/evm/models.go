@@ -27,6 +27,19 @@ func (c *Contract) NextBlock() uint64 {
 	return c.LastScannedBlock + 1
 }
 
+// DecodedEvent stores a decoded event with structured data.
+type DecodedEvent struct {
+	ID              primitive.ObjectID     `bson:"_id,omitempty"`
+	NetworkID       primitive.ObjectID     `bson:"network_id"`
+	ContractAddress string                 `bson:"contract_address"`
+	EventName       string                 `bson:"event_name"`
+	BlockNumber     uint64                 `bson:"block_number"`
+	TransactionHash string                 `bson:"transaction_hash"`
+	LogIndex        uint32                 `bson:"log_index"`
+	Data            map[string]interface{} `bson:"data"`
+	CreatedAt       time.Time              `bson:"created_at"`
+}
+
 type Log struct {
 	ID              primitive.ObjectID     `bson:"_id,omitempty"`
 	NetworkID       primitive.ObjectID     `bson:"network_id"`

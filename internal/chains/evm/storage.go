@@ -34,7 +34,8 @@ func NewStorage(mongoURI, database string) (*Storage, error) {
 func (s *Storage) Database() *mongo.Database   { return s.database }
 func (s *Storage) Networks() *mongo.Collection  { return s.database.Collection("networks") }
 func (s *Storage) Contracts() *mongo.Collection { return s.database.Collection("contracts") }
-func (s *Storage) Logs() *mongo.Collection      { return s.database.Collection("logs") }
+func (s *Storage) Logs() *mongo.Collection          { return s.database.Collection("logs") }
+func (s *Storage) DecodedEvents() *mongo.Collection { return s.database.Collection("decoded_events") }
 
 func (s *Storage) SaveEvents(ctx context.Context, events []core.RawEvent) error {
 	if len(events) == 0 {
@@ -70,6 +71,22 @@ func (s *Storage) SaveEvents(ctx context.Context, events []core.RawEvent) error 
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			log.Printf("evm storage: skipped duplicate logs (block reprocess)")
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Storage) SaveDecodedEvents(ctx context.Context, events []interface{}) error {
+	if len(events) == 0 {
+		return nil
+	}
+	opts := options.InsertMany().SetOrdered(false)
+	_, err := s.DecodedEvents().InsertMany(ctx, events, opts)
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			log.Printf("evm storage: skipped duplicate decoded events")
 			return nil
 		}
 		return err
@@ -160,6 +177,18 @@ func (s *Storage) EnsureIndexes(ctx context.Context) error {
 		{Keys: bson.D{{Key: "address", Value: 1}, {Key: "event_signature", Value: 1}}},
 	} {
 		if _, err := s.Logs().Indexes().CreateOne(ctx, model); err != nil && !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+	}
+	// DecodedEvent indexes
+	decodedColl := s.DecodedEvents()
+	for _, model := range []mongo.IndexModel{
+		{Keys: bson.D{{Key: "contract_address", Value: 1}, {Key: "event_name", Value: 1}, {Key: "block_number", Value: 1}, {Key: "log_index", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "event_name", Value: 1}}},
+		{Keys: bson.D{{Key: "block_number", Value: 1}}},
+		{Keys: bson.D{{Key: "transaction_hash", Value: 1}}},
+	} {
+		if _, err := decodedColl.Indexes().CreateOne(ctx, model); err != nil && !strings.Contains(err.Error(), "already exists") {
 			return err
 		}
 	}

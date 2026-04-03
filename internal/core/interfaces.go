@@ -17,6 +17,7 @@ type EventParser interface {
 
 type StorageInterface interface {
 	SaveEvents(ctx context.Context, events []RawEvent) error
+	SaveDecodedEvents(ctx context.Context, events []interface{}) error
 	UpdateScanProgress(ctx context.Context, address string, block uint64) error
 	LoadContracts(ctx context.Context) ([]ContractConfig, error)
 	EnsureIndexes(ctx context.Context) error
