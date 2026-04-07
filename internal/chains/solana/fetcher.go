@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -100,6 +101,7 @@ func (f *LogFetcher) FetchLogs(ctx context.Context, block core.BlockEvent, contr
 }
 
 // fetchLogsFromBlock is separated for unit testing without a real RPC client.
+// ctx is reserved for future cancellation support.
 func (f *LogFetcher) fetchLogsFromBlock(_ context.Context, b Block, contracts []core.ContractConfig) ([]core.RawEvent, error) {
 	// Build active programs for this slot
 	activePrograms := make(map[string]core.ContractConfig)
@@ -123,7 +125,10 @@ func (f *LogFetcher) fetchLogsFromBlock(_ context.Context, b Block, contracts []
 		for _, k := range tx.AccountKeys {
 			accountSet[k] = struct{}{}
 		}
-		accountKeysJSON, _ := json.Marshal(tx.AccountKeys)
+		accountKeysJSON, jsonErr := json.Marshal(tx.AccountKeys)
+		if jsonErr != nil {
+			accountKeysJSON = []byte("[]")
+		}
 
 		for programAddr := range activePrograms {
 			if _, ok := accountSet[programAddr]; !ok {
@@ -136,8 +141,10 @@ func (f *LogFetcher) fetchLogsFromBlock(_ context.Context, b Block, contracts []
 
 			programEvents := extractProgramEvents(programAddr, tx.LogMessages)
 			for _, pe := range programEvents {
+				// Solana RPC uses standard base64 with padding for Program data log lines.
 				rawBytes, err := base64.StdEncoding.DecodeString(pe.dataBase64)
 				if err != nil {
+					log.Printf("solana fetcher: slot %d tx %s: invalid base64 in program data: %v", b.Slot, tx.Signature, err)
 					continue
 				}
 				if len(rawBytes) < 8 {

@@ -201,3 +201,28 @@ func TestLogFetcher_SkipsSlotBeforeStartBlock(t *testing.T) {
 		t.Fatalf("expected 0 events (slot before start), got %d", len(events))
 	}
 }
+
+func TestLogFetcher_SkipsShortData(t *testing.T) {
+	programID := "TokenkegQ"
+	// "AQID" decodes to 3 bytes — too short for an 8-byte discriminator
+	block := makeMockBlock(programID, []string{
+		"Program " + programID + " invoke [1]",
+		"Program data: AQID",
+		"Program " + programID + " success",
+	})
+
+	fetcher := NewLogFetcher(nil, "netid", map[string]programInfo{
+		programID: {id: "progid1"},
+	})
+	contracts := []core.ContractConfig{
+		{Address: programID, StartBlock: 100},
+	}
+
+	events, err := fetcher.fetchLogsFromBlock(context.Background(), block, contracts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events (data too short for discriminator), got %d", len(events))
+	}
+}
