@@ -8,7 +8,7 @@ import (
 	"github.com/1hoodlab/go-indexing.git/internal/core"
 )
 
-const backfillBatchSize = uint64(100)
+const maxSlotsPerBatch = uint64(100)
 
 // Subscriber implements core.Subscriber for Solana via HTTP polling.
 type Subscriber struct {
@@ -21,13 +21,15 @@ func NewSubscriber(client SolanaRPCClient, pollInterval time.Duration) *Subscrib
 }
 
 func (s *Subscriber) SubscribeBlocks(ctx context.Context, from uint64, out chan<- core.BlockEvent) error {
-	lastProcessed := from - 1
+	var lastProcessed uint64
 	if from == 0 {
 		slot, err := s.client.GetSlot(ctx)
 		if err != nil {
 			return err
 		}
 		lastProcessed = slot
+	} else {
+		lastProcessed = from - 1
 	}
 
 	for {
@@ -59,8 +61,8 @@ func (s *Subscriber) SubscribeBlocks(ctx context.Context, from uint64, out chan<
 
 		startSlot := lastProcessed + 1
 		limit := currentSlot - lastProcessed
-		if limit > backfillBatchSize {
-			limit = backfillBatchSize
+		if limit > maxSlotsPerBatch {
+			limit = maxSlotsPerBatch
 		}
 
 		confirmedSlots, err := s.client.GetBlocksWithLimit(ctx, startSlot, limit)
