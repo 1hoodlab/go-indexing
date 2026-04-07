@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	ErrNoRPCURLs     = errors.New("solana: no RPC URLs provided")
-	ErrAllRPCsFailed = errors.New("solana: all RPC URLs failed")
+	ErrNoRPCURLs     = errors.New("no RPC URLs provided")
+	ErrAllRPCsFailed = errors.New("all RPC URLs failed")
 )
 
 // SolanaRPCClient is the interface for Solana RPC calls.
@@ -24,7 +24,7 @@ type DialFn func(url string) (SolanaRPCClient, error)
 
 // DefaultDialFn connects to a real Solana RPC endpoint.
 func DefaultDialFn(url string) (SolanaRPCClient, error) {
-	return NewClient(url)
+	return NewClient(url), nil
 }
 
 // RPCPool wraps multiple Solana RPC URLs with automatic fallback.
@@ -57,6 +57,9 @@ func NewRPCPoolWithDialFn(urls []string, dialFn DialFn) (*RPCPool, error) {
 		}
 		pool.active = client
 		pool.activeURL = url
+		if i > 0 {
+			log.Printf("solana rpc pool: connected to %s (primary %s failed)", url, urls[0])
+		}
 		pool.remaining = make([]string, len(urls[i+1:]))
 		copy(pool.remaining, urls[i+1:])
 		return pool, nil

@@ -3,6 +3,7 @@ package solana
 import (
 	"context"
 	"errors"
+	"log"
 
 	solanago "github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
@@ -29,8 +30,8 @@ type Client struct {
 }
 
 // NewClient creates a Client connected to the given RPC URL.
-func NewClient(url string) (*Client, error) {
-	return &Client{rpc: solanarpc.New(url)}, nil
+func NewClient(url string) *Client {
+	return &Client{rpc: solanarpc.New(url)}
 }
 
 // GetSlot returns the current confirmed slot.
@@ -54,14 +55,14 @@ func (c *Client) GetBlocksWithLimit(ctx context.Context, startSlot, limit uint64
 // Returns nil, nil if the slot has no block (not confirmed).
 func (c *Client) GetBlock(ctx context.Context, slot uint64) (*Block, error) {
 	maxVersion := solanarpc.MaxSupportedTransactionVersion0
-	noRewards := false
+	excludeRewards := true
 
 	result, err := c.rpc.GetBlockWithOpts(ctx, slot, &solanarpc.GetBlockOpts{
 		Commitment:                     solanarpc.CommitmentConfirmed,
 		Encoding:                       solanago.EncodingBase64,
 		TransactionDetails:             solanarpc.TransactionDetailsFull,
 		MaxSupportedTransactionVersion: &maxVersion,
-		Rewards:                        &noRewards,
+		Rewards:                        &excludeRewards,
 	})
 	if err != nil {
 		// ErrNotConfirmed means the slot has no block — treat as nil.
@@ -89,6 +90,7 @@ func (c *Client) GetBlock(ctx context.Context, slot uint64) (*Block, error) {
 
 		tx, err := txWithMeta.GetTransaction()
 		if err != nil {
+			log.Printf("solana client: slot %d: failed to decode transaction: %v", slot, err)
 			continue
 		}
 		if len(tx.Signatures) == 0 {
