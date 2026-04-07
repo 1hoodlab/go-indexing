@@ -1,0 +1,18 @@
+{
+  "network": {
+    "name": "Solana Devnet",
+    "chain_type": "solana",
+    "chain_id": 0,
+    "rpc_urls": ["https://api.devnet.solana.com"],
+    "type": "testnet",
+    "status": "active"
+  },
+  "contracts": [
+    {
+      "address": "11111111111111111111111111111111",
+      "events": [],
+      "idl": "",
+      "start_block": 1
+    }
+  ]
+}

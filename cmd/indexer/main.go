@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/1hoodlab/go-indexing.git/internal/chains/evm"
+	solanachain "github.com/1hoodlab/go-indexing.git/internal/chains/solana"
 	"github.com/1hoodlab/go-indexing.git/internal/config"
 	"github.com/1hoodlab/go-indexing.git/internal/core"
 	"github.com/1hoodlab/go-indexing.git/internal/handlers"
@@ -20,6 +21,8 @@ func main() {
 	switch cfg.ChainType {
 	case "evm":
 		runEVM(cfg)
+	case "solana":
+		runSolana(cfg)
 	default:
 		log.Fatalf("unsupported chain type: %s", cfg.ChainType)
 	}
@@ -83,5 +86,72 @@ func runEVM(cfg config.Config) {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
+	log.Println("shutting down...")
+}
+
+func runSolana(cfg config.Config) {
+	store, err := solanachain.NewStorage(cfg.MongoURI, cfg.Database)
+	if err != nil {
+		log.Fatalf("solana: failed to connect to MongoDB: %v", err)
+	}
+	defer store.Close(context.Background())
+
+	if err := store.EnsureIndexes(context.Background()); err != nil {
+		log.Fatalf("solana: failed to ensure indexes: %v", err)
+	}
+
+	contracts, err := store.LoadContracts(context.Background())
+	if err != nil {
+		log.Fatalf("solana: failed to load contracts: %v", err)
+	}
+	if len(contracts) == 0 {
+		log.Fatal("solana: no active programs to index")
+	}
+
+	programModels, err := store.LoadProgramModels(context.Background())
+	if err != nil {
+		log.Fatalf("solana: failed to load program models: %v", err)
+	}
+
+	network, err := store.LoadNetwork(context.Background())
+	if err != nil {
+		log.Fatalf("solana: failed to load network: %v", err)
+	}
+	if len(network.RPCURLs) == 0 {
+		log.Fatal("solana: network has no RPC URLs configured in database")
+	}
+
+	pool, err := solanachain.NewRPCPool(network.RPCURLs)
+	if err != nil {
+		log.Fatalf("solana: failed to create RPC pool: %v", err)
+	}
+
+	networkID := network.ID.Hex()
+	programMap := make(map[string]solanachain.ProgramInfoExport, len(programModels))
+	for _, prog := range programModels {
+		programMap[prog.Address] = solanachain.ProgramInfoExport{
+			ID:  prog.ID.Hex(),
+			IDL: prog.IDL,
+		}
+	}
+
+	subscriber := solanachain.NewSubscriber(pool, cfg.PollInterval)
+	fetcher := solanachain.NewLogFetcherFromExport(pool, networkID, programMap)
+	parser := solanachain.NewEventParser()
+	handler := solanachain.DefaultHandler(store, parser)
+
+	registry := core.NewRegistry(handler)
+
+	p := pipeline.New(cfg.ChainName, subscriber, fetcher, registry, store, contracts)
+	if err := p.Start(); err != nil {
+		log.Fatalf("solana: failed to start pipeline: %v", err)
+	}
+	defer p.Stop()
+
+	log.Printf("[%s] solana indexer started (rpc=%s)", cfg.ChainName, pool.ActiveURL())
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
 	log.Println("shutting down...")
 }

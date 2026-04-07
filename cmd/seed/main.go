@@ -36,6 +36,7 @@ type seedContract struct {
 	IDL        string          `json:"idl,omitempty"`
 	Events     []string        `json:"events"`
 	StartBlock uint64          `json:"start_block"`
+	StartSlot  uint64          `json:"start_slot,omitempty"`
 }
 
 func main() {
@@ -94,50 +95,96 @@ func main() {
 		log.Fatalf("failed to find network: %v", err)
 	}
 
-	// Upsert contracts
-	contractColl := db.Collection("contracts")
-	for _, sc := range seed.Contracts {
-		addr := strings.ToLower(sc.Address)
-		filter := bson.M{"network_id": net.ID, "address": addr}
+	switch strings.ToLower(seed.Network.ChainType) {
+	case "solana":
+		// Upsert programs for Solana chain.
+		programColl := db.Collection("programs")
+		for _, sc := range seed.Contracts {
+			addr := sc.Address // base58 is case-sensitive.
+			filter := bson.M{"network_id": net.ID, "address": addr}
 
-		setFields := bson.M{
-			"events":     sc.Events,
-			"status":     models.StatusActive,
-			"updated_at": now,
-		}
+			setFields := bson.M{
+				"events":     sc.Events,
+				"status":     models.StatusActive,
+				"updated_at": now,
+			}
+			if sc.IDL != "" {
+				setFields["idl"] = sc.IDL
+			}
 
-		if len(sc.ABI) > 0 {
-			// Compact ABI JSON
-			var compact interface{}
-			if err := json.Unmarshal(sc.ABI, &compact); err == nil {
-				minified, _ := json.Marshal(compact)
-				setFields["abi"] = string(minified)
+			startSlot := sc.StartSlot
+			if startSlot == 0 {
+				startSlot = sc.StartBlock
+			}
+
+			update := bson.M{
+				"$set": setFields,
+				"$setOnInsert": bson.M{
+					"start_slot":        startSlot,
+					"last_scanned_slot": uint64(0),
+					"created_at":        now,
+				},
+			}
+
+			result, err := programColl.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+			if err != nil {
+				log.Fatalf("failed to upsert program %s: %v", addr, err)
+			}
+
+			if result.UpsertedCount > 0 {
+				log.Printf("created program: %s (start_slot: %d)", addr, startSlot)
+			} else if result.ModifiedCount > 0 {
+				log.Printf("updated program: %s", addr)
+			} else {
+				log.Printf("program unchanged: %s", addr)
 			}
 		}
-		if sc.IDL != "" {
-			setFields["idl"] = sc.IDL
-		}
+	default:
+		// Upsert contracts for non-Solana chains.
+		contractColl := db.Collection("contracts")
+		for _, sc := range seed.Contracts {
+			addr := strings.ToLower(sc.Address)
+			filter := bson.M{"network_id": net.ID, "address": addr}
 
-		update := bson.M{
-			"$set": setFields,
-			"$setOnInsert": bson.M{
-				"start_block":        sc.StartBlock,
-				"last_scanned_block": uint64(0),
-				"created_at":         now,
-			},
-		}
+			setFields := bson.M{
+				"events":     sc.Events,
+				"status":     models.StatusActive,
+				"updated_at": now,
+			}
 
-		result, err := contractColl.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
-		if err != nil {
-			log.Fatalf("failed to upsert contract %s: %v", addr, err)
-		}
+			if len(sc.ABI) > 0 {
+				// Compact ABI JSON.
+				var compact interface{}
+				if err := json.Unmarshal(sc.ABI, &compact); err == nil {
+					minified, _ := json.Marshal(compact)
+					setFields["abi"] = string(minified)
+				}
+			}
+			if sc.IDL != "" {
+				setFields["idl"] = sc.IDL
+			}
 
-		if result.UpsertedCount > 0 {
-			log.Printf("created contract: %s (start_block: %d)", addr, sc.StartBlock)
-		} else if result.ModifiedCount > 0 {
-			log.Printf("updated contract: %s", addr)
-		} else {
-			log.Printf("contract unchanged: %s", addr)
+			update := bson.M{
+				"$set": setFields,
+				"$setOnInsert": bson.M{
+					"start_block":        sc.StartBlock,
+					"last_scanned_block": uint64(0),
+					"created_at":         now,
+				},
+			}
+
+			result, err := contractColl.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+			if err != nil {
+				log.Fatalf("failed to upsert contract %s: %v", addr, err)
+			}
+
+			if result.UpsertedCount > 0 {
+				log.Printf("created contract: %s (start_block: %d)", addr, sc.StartBlock)
+			} else if result.ModifiedCount > 0 {
+				log.Printf("updated contract: %s", addr)
+			} else {
+				log.Printf("contract unchanged: %s", addr)
+			}
 		}
 	}
 

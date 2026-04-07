@@ -1,0 +1,18 @@
+{
+  "network": {
+    "name": "Solana Mainnet",
+    "chain_type": "solana",
+    "chain_id": 1,
+    "rpc_urls": ["https://api.mainnet-beta.solana.com", "https://solana-mainnet.gateway.tatum.io"],
+    "type": "mainnet",
+    "status": "active"
+  },
+  "contracts": [
+    {
+      "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "events": [],
+      "idl": "",
+      "start_slot": 1
+    }
+  ]
+}
