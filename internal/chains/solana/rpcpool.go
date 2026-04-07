@@ -31,11 +31,12 @@ func DefaultDialFn(url string) (SolanaRPCClient, error) {
 // When the active client fails, it rotates to the next URL.
 // Failed URLs are permanently removed (restart to reset).
 type RPCPool struct {
-	mu        sync.RWMutex
-	active    SolanaRPCClient
-	activeURL string
-	remaining []string
-	dialFn    DialFn
+	mu          sync.RWMutex
+	active      SolanaRPCClient
+	activeURL   string
+	activeIndex int
+	urls        []string
+	dialFn      DialFn
 }
 
 // NewRPCPool creates a pool from a list of RPC URLs.
@@ -48,7 +49,11 @@ func NewRPCPoolWithDialFn(urls []string, dialFn DialFn) (*RPCPool, error) {
 	if len(urls) == 0 {
 		return nil, ErrNoRPCURLs
 	}
-	pool := &RPCPool{dialFn: dialFn}
+	pool := &RPCPool{
+		dialFn:      dialFn,
+		urls:        append([]string(nil), urls...),
+		activeIndex: -1,
+	}
 	for i, url := range urls {
 		client, err := dialFn(url)
 		if err != nil {
@@ -57,22 +62,25 @@ func NewRPCPoolWithDialFn(urls []string, dialFn DialFn) (*RPCPool, error) {
 		}
 		pool.active = client
 		pool.activeURL = url
+		pool.activeIndex = i
 		if i > 0 {
 			log.Printf("solana rpc pool: connected to %s (primary %s failed)", url, urls[0])
 		}
-		pool.remaining = make([]string, len(urls[i+1:]))
-		copy(pool.remaining, urls[i+1:])
 		return pool, nil
 	}
 	return nil, ErrAllRPCsFailed
 }
 
-// rotate switches to the next remaining URL. Returns error if none left.
+// rotate cycles to the next URL and reconnects. It never removes URLs permanently.
 // Caller must hold the write lock.
 func (p *RPCPool) rotate() error {
-	for len(p.remaining) > 0 {
-		url := p.remaining[0]
-		p.remaining = p.remaining[1:]
+	if len(p.urls) == 0 {
+		return ErrNoRPCURLs
+	}
+	start := p.activeIndex
+	for tries := 0; tries < len(p.urls)-1; tries++ {
+		next := (start + 1 + tries) % len(p.urls)
+		url := p.urls[next]
 		client, err := p.dialFn(url)
 		if err != nil {
 			log.Printf("solana rpc pool: %s failed: %v", url, err)
@@ -80,6 +88,7 @@ func (p *RPCPool) rotate() error {
 		}
 		p.active = client
 		p.activeURL = url
+		p.activeIndex = next
 		log.Printf("solana rpc pool: switched to %s", url)
 		return nil
 	}
@@ -97,7 +106,7 @@ func callWithFallback[T any](p *RPCPool, fn func(SolanaRPCClient) (T, error)) (T
 		return result, nil
 	}
 
-	for {
+	for attempts := 0; attempts < len(p.urls)-1; attempts++ {
 		p.mu.Lock()
 		if rotateErr := p.rotate(); rotateErr != nil {
 			p.mu.Unlock()
@@ -112,6 +121,8 @@ func callWithFallback[T any](p *RPCPool, fn func(SolanaRPCClient) (T, error)) (T
 			return result, nil
 		}
 	}
+	var zero T
+	return zero, ErrAllRPCsFailed
 }
 
 func (p *RPCPool) GetSlot(ctx context.Context) (uint64, error) {
