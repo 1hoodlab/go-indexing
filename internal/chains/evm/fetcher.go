@@ -2,51 +2,35 @@ package evm
 
 import (
 	"context"
-	"fmt"
 	"math/big"
-	"strconv"
 	"strings"
+	"time"
 
-	"github.com/1hoodlab/go-indexing.git/internal/core"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
-type LogFetcher struct {
-	client      RPCClient
-	networkID   string
-	contractMap map[string]contractInfo
+// RangeLogFetcher fetches logs across a block range for catch-up mode.
+type RangeLogFetcher struct {
+	client    RPCClient
+	processor *LogProcessor
 }
 
-type contractInfo struct {
-	id  string
-	abi string
+func NewRangeLogFetcher(client RPCClient, processor *LogProcessor) *RangeLogFetcher {
+	return &RangeLogFetcher{client: client, processor: processor}
 }
 
-func NewLogFetcher(client RPCClient, networkID string, contracts []*Contract) *LogFetcher {
-	cm := make(map[string]contractInfo, len(contracts))
-	for _, c := range contracts {
-		cm[strings.ToLower(c.Address)] = contractInfo{id: c.ID.Hex(), abi: c.ABI}
-	}
-	return &LogFetcher{client: client, networkID: networkID, contractMap: cm}
-}
-
-func (f *LogFetcher) FetchLogs(ctx context.Context, block core.BlockEvent, contracts []core.ContractConfig) ([]core.RawEvent, error) {
-	var addresses []common.Address
-	for _, c := range contracts {
-		nextBlock := c.StartBlock
-		if c.LastScanned > 0 {
-			nextBlock = c.LastScanned + 1
-		}
-		if block.Number >= nextBlock {
-			addresses = append(addresses, common.HexToAddress(c.Address))
-		}
-	}
+func (f *RangeLogFetcher) FetchLogsRange(ctx context.Context, fromBlock, toBlock uint64, addresses []string) ([]ProcessedLog, error) {
 	if len(addresses) == 0 {
 		return nil, nil
 	}
-
-	blockNum := new(big.Int).SetUint64(block.Number)
-	logs, err := f.client.FilterLogs(ctx, blockNum, blockNum, addresses)
+	addrs := make([]common.Address, 0, len(addresses))
+	for _, a := range addresses {
+		addrs = append(addrs, common.HexToAddress(a))
+	}
+	from := new(big.Int).SetUint64(fromBlock)
+	to := new(big.Int).SetUint64(toBlock)
+	logs, err := f.client.FilterLogs(ctx, from, to, addrs)
 	if err != nil {
 		return nil, err
 	}
@@ -54,46 +38,32 @@ func (f *LogFetcher) FetchLogs(ctx context.Context, block core.BlockEvent, contr
 		return nil, nil
 	}
 
-	header, err := f.client.HeaderByNumber(ctx, blockNum)
-	if err != nil {
-		return nil, err
-	}
-	blockHash := header.Hash().Hex()
-
-	events := make([]core.RawEvent, 0, len(logs))
+	blockMeta := make(map[uint64]struct {
+		timestamp  time.Time
+		parentHash string
+	})
+	var out []ProcessedLog
 	for _, vLog := range logs {
-		contractAddr := strings.ToLower(vLog.Address.Hex())
-		ci, ok := f.contractMap[contractAddr]
+		meta, ok := blockMeta[vLog.BlockNumber]
 		if !ok {
-			continue
+			header, err := f.client.HeaderByNumber(ctx, new(big.Int).SetUint64(vLog.BlockNumber))
+			if err != nil {
+				return nil, err
+			}
+			meta = struct {
+				timestamp  time.Time
+				parentHash string
+			}{
+				timestamp:  time.Unix(int64(header.Time), 0).UTC(),
+				parentHash: strings.ToLower(header.ParentHash.Hex()),
+			}
+			blockMeta[vLog.BlockNumber] = meta
 		}
-
-		eventKey := ""
-		if len(vLog.Topics) > 0 {
-			eventKey = vLog.Topics[0].Hex()
+		processed := f.processor.ProcessLogs([]types.Log{vLog}, meta.timestamp)
+		for i := range processed {
+			processed[i].ParentHash = meta.parentHash
 		}
-
-		indexedTopics := make([]string, 0, len(vLog.Topics)-1)
-		for i := 1; i < len(vLog.Topics); i++ {
-			indexedTopics = append(indexedTopics, vLog.Topics[i].Hex())
-		}
-
-		events = append(events, core.RawEvent{
-			BlockNumber:     vLog.BlockNumber,
-			TransactionHash: vLog.TxHash.Hex(),
-			Address:         contractAddr,
-			EventKey:        eventKey,
-			RawData:         vLog.Data,
-			Metadata: map[string]string{
-				"network_id":  f.networkID,
-				"contract_id": ci.id,
-				"block_hash":  blockHash,
-				"log_index":   strconv.FormatUint(uint64(vLog.Index), 10),
-				"topics":      strings.Join(indexedTopics, ","),
-				"data":        fmt.Sprintf("0x%x", vLog.Data),
-				"abi":         ci.abi,
-			},
-		})
+		out = append(out, processed...)
 	}
-	return events, nil
+	return out, nil
 }

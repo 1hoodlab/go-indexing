@@ -2,29 +2,33 @@ package evm
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 // Client wraps an Ethereum RPC client for block/transaction queries.
 type Client struct {
 	*ethclient.Client
+	rpc    *rpc.Client
 	rpcURL string
 }
 
 // NewClient creates a new EVM client.
 func NewClient(rpcURL string) (*Client, error) {
-	client, err := ethclient.Dial(rpcURL)
+	rpcClient, err := rpc.Dial(rpcURL)
 	if err != nil {
 		return nil, err
 	}
-
+	client := ethclient.NewClient(rpcClient)
 	return &Client{
 		Client: client,
+		rpc:    rpcClient,
 		rpcURL: rpcURL,
 	}, nil
 }
@@ -47,4 +51,46 @@ func (c *Client) FilterLogs(ctx context.Context, fromBlock, toBlock *big.Int, ad
 		Addresses: addresses,
 	}
 	return c.Client.FilterLogs(ctx, query)
+}
+
+type rpcReceipt struct {
+	TransactionHash  common.Hash    `json:"transactionHash"`
+	TransactionIndex hexUint        `json:"transactionIndex"`
+	Logs             []types.Log    `json:"logs"`
+}
+
+type hexUint uint
+
+func (h *hexUint) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	n := new(big.Int)
+	if _, ok := n.SetString(s, 0); !ok {
+		return json.Unmarshal(data, &s)
+	}
+	*h = hexUint(n.Uint64())
+	return nil
+}
+
+// GetBlockReceipts calls eth_getBlockReceipts.
+func (c *Client) GetBlockReceipts(ctx context.Context, blockHash common.Hash) ([]RpcReceipt, error) {
+	var raw []rpcReceipt
+	err := c.rpc.CallContext(ctx, &raw, "eth_getBlockReceipts", blockHash)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	out := make([]RpcReceipt, len(raw))
+	for i, r := range raw {
+		out[i] = RpcReceipt{
+			TransactionHash:  r.TransactionHash,
+			TransactionIndex: uint(r.TransactionIndex),
+			Logs:             r.Logs,
+		}
+	}
+	return out, nil
 }

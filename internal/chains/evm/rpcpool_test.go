@@ -36,6 +36,13 @@ func (m *mockRPCClient) FilterLogs(ctx context.Context, from, to *big.Int, addre
 	return []types.Log{}, nil
 }
 
+func (m *mockRPCClient) GetBlockReceipts(ctx context.Context, blockHash common.Hash) ([]RpcReceipt, error) {
+	if m.failCalls {
+		return nil, errors.New("rpc error")
+	}
+	return []RpcReceipt{}, nil
+}
+
 func TestRPCPool_UsesFirstURL(t *testing.T) {
 	dialCalls := []string{}
 	dialFn := func(url string) (RPCClient, error) {
@@ -96,7 +103,7 @@ func TestRPCPool_ReturnsErrorWhenAllFail(t *testing.T) {
 	}
 }
 
-func TestRPCPool_FailedURLNotReused(t *testing.T) {
+func TestRPCPool_RetriesFallbacksOnEachCall(t *testing.T) {
 	dialCalls := []string{}
 	dialFn := func(url string) (RPCClient, error) {
 		dialCalls = append(dialCalls, url)
@@ -108,19 +115,14 @@ func TestRPCPool_FailedURLNotReused(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// First call: url1 fails, rotate to url2, url2 fails too
 	pool.HeaderByNumber(context.Background(), big.NewInt(1))
 
-	// Second call: should fail immediately, NOT retry url1
 	dialCalls = []string{}
 	_, err = pool.HeaderByNumber(context.Background(), big.NewInt(2))
 	if !errors.Is(err, ErrAllRPCsFailed) {
 		t.Fatalf("expected ErrAllRPCsFailed, got: %v", err)
 	}
-	// No new dial calls — url1 was not retried
-	for _, url := range dialCalls {
-		if url == "url1" {
-			t.Fatal("url1 was retried after being marked as failed")
-		}
+	if len(dialCalls) != 0 {
+		t.Fatalf("expected no extra dial calls on retry, got %v", dialCalls)
 	}
 }

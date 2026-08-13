@@ -9,6 +9,7 @@
 |----------|--------|
 | Database | PostgreSQL (replace MongoDB for indexer path) |
 | Queue | In-DB `outbox` table (transactional outbox) |
+| Event listen config | `evm_event_signatures` table (per contract, per topic0); not embedded on `contracts` |
 | Topics storage | `JSONB` array on `eth_logs`; generated `topic0` column for indexes |
 | Decoded data | `decoded_params JSONB` on `eth_logs` (ABI decode at index time) |
 | Scan control | `indexer_config` key/value table (stop/start, checkpoint) |
@@ -26,6 +27,7 @@ erDiagram
     networks ||--o{ eth_logs : "indexed on"
     blocks ||--o{ blocks : "parent_block_id"
     blocks ||--o{ eth_logs : "contains"
+    contracts ||--o{ evm_event_signatures : "listens to"
     contracts ||--o{ eth_logs : "emits"
     eth_logs ||--o| outbox : "1:1 enqueue"
     outbox ||--o{ webhook_deliveries : "attempts"
@@ -52,7 +54,15 @@ erDiagram
         bigint network_id FK
         text address UK
         jsonb abi
-        text[] events
+        text status
+    }
+
+    evm_event_signatures {
+        bigint id PK
+        bigint contract_id FK
+        text event_name
+        text signature
+        text topic0
         text status
     }
 
@@ -180,7 +190,7 @@ INSERT INTO indexer_config (network_id, key, value, description) VALUES
     ($network_id, 'confirmation_depth', '12', 'Blocks before confirm + outbox enqueue.');
 ```
 
-**Scan anchoring:** Block scanning is anchored only by `indexer_config.checkpoint` (network-level). Contracts define *what* to index (address, ABI, events), not *where* to start. To index from an earlier block — including lookback or a newly added contract — stop the indexer and set `checkpoint` to the desired block.
+**Scan anchoring:** Block scanning is anchored only by `indexer_config.checkpoint` (network-level). `contracts` + `evm_event_signatures` define *what* to index (address, ABI, which topic0s to listen to), not *where* to start. To index from an earlier block — including lookback or a newly added contract — stop the indexer and set `checkpoint` to the desired block.
 
 **Operator workflow:**
 
@@ -202,7 +212,7 @@ WHERE network_id = $1 AND key = 'scan_enabled';
 
 ### 3. `contracts`
 
-Contracts/programs to index on a network.
+EVM contracts to index on a network. Event listen targets live in `evm_event_signatures` (not embedded here).
 
 ```sql
 CREATE TABLE contracts (
@@ -210,7 +220,6 @@ CREATE TABLE contracts (
     network_id  BIGINT NOT NULL REFERENCES networks (id) ON DELETE CASCADE,
     address     TEXT NOT NULL,                        -- lowercase 0x-prefixed
     abi         JSONB,                                -- minified ABI JSON
-    events      TEXT[] NOT NULL DEFAULT '{}',         -- ["Transfer(address,address,uint256)", ...]
     status      contract_status NOT NULL DEFAULT 'active',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -225,7 +234,87 @@ CREATE INDEX idx_contracts_status ON contracts (network_id, status);
 
 ---
 
-### 4. `blocks`
+### 4. `evm_event_signatures`
+
+Which EVM events the indexer listens to per contract. Loaded at worker start; changes require indexer restart.
+
+Each row stores the canonical event signature string and its precomputed `topic0` (keccak256 hash). The indexer filters RPC logs by `topic0` and only persists logs whose `topic0` matches an active row.
+
+```sql
+CREATE TABLE evm_event_signatures (
+    id           BIGSERIAL PRIMARY KEY,
+    contract_id  BIGINT NOT NULL REFERENCES contracts (id) ON DELETE CASCADE,
+    event_name   TEXT NOT NULL,                       -- e.g. "Transfer"
+    signature    TEXT NOT NULL,                       -- e.g. "Transfer(address,address,uint256)"
+    topic0       TEXT NOT NULL,                       -- keccak256(signature), lowercase 0x-prefixed
+    status       contract_status NOT NULL DEFAULT 'active',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT evm_event_signatures_contract_topic0_unique UNIQUE (contract_id, topic0),
+    CONSTRAINT evm_event_signatures_topic0_format CHECK (topic0 ~ '^0x[0-9a-f]{64}$')
+);
+
+CREATE INDEX idx_evm_event_signatures_contract ON evm_event_signatures (contract_id);
+CREATE INDEX idx_evm_event_signatures_topic0 ON evm_event_signatures (topic0);
+CREATE INDEX idx_evm_event_signatures_active
+    ON evm_event_signatures (contract_id, status)
+    WHERE status = 'active';
+```
+
+**Indexer load query** (equivalent to `indexer-service` `contract` + `event_signature` join):
+
+```sql
+SELECT
+    c.id            AS contract_id,
+    c.address,
+    c.abi,
+    e.event_name,
+    e.signature,
+    e.topic0
+FROM contracts c
+INNER JOIN evm_event_signatures e ON e.contract_id = c.id
+WHERE c.network_id = $1
+  AND c.status = 'active'
+  AND e.status = 'active';
+```
+
+**Seed from JSON** (`events: ["Transfer(address,address,uint256)", ...]`):
+
+1. Upsert `contracts` row (address + abi).
+2. For each event string: compute `topic0` in application code (keccak256), derive `event_name` from signature, insert into `evm_event_signatures` with `ON CONFLICT (contract_id, topic0) DO NOTHING`.
+
+**Operator workflow — stop listening to one event:**
+
+```sql
+UPDATE evm_event_signatures
+SET status = 'deactive', updated_at = now()
+WHERE contract_id = $1 AND topic0 = $2;
+-- restart indexer worker
+```
+
+**Re-enable:**
+
+```sql
+UPDATE evm_event_signatures
+SET status = 'active', updated_at = now()
+WHERE contract_id = $1 AND topic0 = $2;
+-- restart indexer worker
+```
+
+**Dynamic contract discovery** (factory spawns child contract): upsert `contracts` + bulk-insert new `evm_event_signatures` rows in a separate transaction, then restart indexer (or hot-reload when implemented).
+
+**Indexer fetch filter:** At startup, build an in-memory map `address → set(topic0)` from the load query above. For each block:
+
+1. Call `eth_getLogs` with contract addresses (optionally pass `topics: [[topic0_a, topic0_b, ...]]` to filter at RPC).
+2. Drop any log whose `topic0` is not in the allowed set for that contract address.
+3. Decode and insert only matching logs into `eth_logs`.
+
+Config is loaded once at worker start — same as `indexer-service`. After changing `evm_event_signatures` in the database, restart the indexer.
+
+---
+
+### 5. `blocks`
 
 Block chain with parent linkage for reorg detection and cascade.
 
@@ -281,7 +370,7 @@ WHERE log_id IN (SELECT id FROM eth_logs WHERE status = 'orphaned')
 
 ---
 
-### 5. `eth_logs`
+### 6. `eth_logs`
 
 Indexed Ethereum event logs. Raw on-chain fields plus ABI-decoded params on the same row.
 
@@ -342,7 +431,7 @@ CREATE INDEX idx_eth_logs_decoded_params_gin ON eth_logs USING GIN (decoded_para
 
 **Decoded params JSONB shape:**
 
-Indexer decodes using `contracts.abi` + `topics` + `data` at insert time (same logic as current `SaveToLogs` handler):
+Indexer decodes using `contracts.abi` + `evm_event_signatures.event_name` + `topics` + `data` at insert time (same logic as current `SaveToLogs` handler):
 
 ```json
 {
@@ -358,7 +447,7 @@ Indexer decodes using `contracts.abi` + `topics` + `data` at insert time (same l
 
 ---
 
-### 6. `outbox`
+### 7. `outbox`
 
 Transactional queue: one row per log, created in same TX as `eth_logs` insert (when block is confirmed).
 
@@ -399,7 +488,7 @@ LIMIT 100;
 
 ---
 
-### 7. `webhook_endpoints`
+### 8. `webhook_endpoints`
 
 External webhook targets.
 
@@ -418,7 +507,7 @@ CREATE TABLE webhook_endpoints (
 
 ---
 
-### 8. `webhook_deliveries`
+### 9. `webhook_deliveries`
 
 Audit trail of delivery attempts (retries).
 
@@ -443,6 +532,8 @@ CREATE INDEX idx_webhook_deliveries_attempted ON webhook_deliveries (attempted_a
 ## Indexer Transaction (confirmed block)
 
 When a block reaches `confirmation_depth`, in one transaction:
+
+Only logs whose `topic0` matches an active `evm_event_signatures` row are inserted (filtered at fetch time or before insert).
 
 ```sql
 BEGIN;
@@ -522,7 +613,8 @@ COMMIT;
 |-------|---------|------------|
 | `networks` | Chain config, RPC URLs | Seed / admin |
 | `indexer_config` | Stop/start, checkpoint, depth | Operator / indexer |
-| `contracts` | Addresses, ABI, events to index | Seed / admin |
+| `contracts` | Contract addresses and ABI | Seed / admin / discovery |
+| `evm_event_signatures` | Per-contract event listen config (topic0) | Seed / admin / discovery |
 | `blocks` | Block chain, parent linkage, reorg | Indexer |
 | `eth_logs` | Raw logs + `decoded_params` JSONB | Indexer |
 | `outbox` | Delivery queue | Indexer (same TX as logs) |
@@ -538,13 +630,13 @@ COMMIT;
 │   Indexer   │◄────────────►│  Blockchain  │
 │  (process)  │              └──────────────┘
 └──────┬──────┘
-       │ read: networks, contracts, indexer_config
+       │ read: networks, contracts, evm_event_signatures, indexer_config
        │ write (TX): blocks, eth_logs, outbox, checkpoint
        ▼
 ┌─────────────────────────────────────────────┐
 │              PostgreSQL                      │
-│  networks → contracts → blocks → eth_logs   │
-│  indexer_config          eth_logs → outbox  │
+│  networks → contracts → evm_event_signatures│
+│  indexer_config    blocks → eth_logs → outbox│
 └──────────────────┬──────────────────────────┘
                    │ poll SKIP LOCKED
                    ▼
@@ -570,9 +662,12 @@ COMMIT;
 | MongoDB collection | PostgreSQL table |
 |--------------------|------------------|
 | `networks` | `networks` |
-| `contracts` | `contracts` |
+| `contracts` | `contracts` (without embedded `events[]`) |
+| `contracts.events[]` | `evm_event_signatures` (one row per event signature) |
 | `logs` | `eth_logs` (raw fields) |
 | `decoded_events` | `eth_logs.decoded_params` (merged into same row) |
-| — | `blocks`, `indexer_config`, `outbox`, `webhook_*` (new) |
+| — | `blocks`, `indexer_config`, `evm_event_signatures`, `outbox`, `webhook_*` (new) |
+
+**`contracts.events[]` migration:** For each contract document, unnest `events[]`, compute `topic0` per signature string in application code, insert rows into `evm_event_signatures`. Drop the `events` field from contract documents after migration.
 
 Multi-chain deployment stays the same: **one PostgreSQL database per chain instance** (or schema per chain in one cluster).

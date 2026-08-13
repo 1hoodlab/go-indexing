@@ -1,166 +1,125 @@
 # Go Indexing
 
-Indexer sự kiện on-chain đa chuỗi. Hiện hỗ trợ **EVM** (Ethereum, BSC, Base, Sepolia…). Các loại chain khác có thể bổ sung sau qua `CHAIN_TYPE`.
+EVM on-chain event indexer backed by **PostgreSQL**.
 
-## Mô hình dữ liệu (quan trọng khi multi-chain)
+## Data model
 
-- **Một process indexer** chỉ làm việc với **một MongoDB database** (`MONGODB_DATABASE`).
-- Trong database đó, indexer đọc **một network `status: active`** và các **contract `status: active`** để biết RPC và contract cần index.
-- **Tách chain bằng tên database**: mỗi chain (hoặc môi trường) nên dùng một `MONGODB_DATABASE` riêng (ví dụ `indexing_base`, `indexing_sepolia`). Cùng một cụm MongoDB, khác tên DB → dữ liệu không lẫn.
-- **RPC** lấy từ MongoDB (`network.rpc_urls` sau khi seed), **không** cấu hình RPC trong env (trừ `MONGODB_URI`).
+- One indexer process ↔ one PostgreSQL database (`POSTGRES_DSN`).
+- Config: `networks`, `contracts`, `evm_event_signatures`, `indexer_config`.
+- Indexed data: `blocks`, `eth_logs`, `outbox`.
+- **RPC** comes from `networks.rpc_urls` (seed), not from env.
 
-## Yêu cầu
+## Requirements
 
 - Go 1.25+
-- Docker (để chạy MongoDB local)
-- File `.env` (tùy chọn): copy từ `.env.example`
+- Docker (PostgreSQL)
+- Optional `.env` — copy from `.env.example`
 
-## Cách dùng nhanh (một chain)
+## Quick start
 
-### 1. Chạy MongoDB
-
-```bash
-docker compose up -d
-```
-
-### 2. Seed dữ liệu (network + contracts)
-
-**Luôn dùng cùng `MONGODB_DATABASE` với bước chạy indexer.**
-
-Ví dụ Sepolia:
+### 1. PostgreSQL + migrate
 
 ```bash
-# Linux / macOS
-MONGODB_DATABASE=indexing_sepolia go run cmd/seed/main.go --config cmd/seed/data/sepolia.json
+docker compose up -d postgres
+go run ./cmd/migrate -- up
 ```
+
+### 2. Seed
+
+```bash
+go run ./cmd/seed-pg --config cmd/seed/data/base.json
+```
+
+Default checkpoint = `min(contracts[].start_block)`. Override: `--checkpoint 12345678`.
+
+### 3. Run indexer
 
 ```powershell
-# Windows PowerShell
-$env:MONGODB_DATABASE="indexing_sepolia"
-go run cmd/seed/main.go --config cmd/seed/data/sepolia.json
+$env:CHAIN_NAME="base"
+go run ./cmd/indexer/main.go
 ```
 
-Có sẵn thêm `cmd/seed/data/base.json` (Base mainnet).
-
-### 3. Chạy indexer
-
-```bash
-# Linux / macOS — khớp DB với bước seed
-CHAIN_TYPE=evm \
-CHAIN_NAME=sepolia \
-MONGODB_DATABASE=indexing_sepolia \
-go run cmd/indexer/main.go
-```
+### 4. Run consumer (optional webhook)
 
 ```powershell
-# Windows PowerShell
-$env:CHAIN_TYPE="evm"
-$env:CHAIN_NAME="sepolia"
-$env:MONGODB_DATABASE="indexing_sepolia"
-go run cmd/indexer/main.go
+$env:WEBHOOK_URL="https://your-webhook.example/hooks"
+$env:WEBHOOK_SECRET="your-secret"
+go run ./cmd/consumer/main.go
 ```
 
-Hoặc đặt các biến trong file `.env` rồi chạy `go run cmd/indexer/main.go` (ứng dụng đọc `.env` qua `godotenv`).
+**Log fetch strategy:**
+- **Catch-up**: `eth_getLogs` + filter `address`
+- **Tip-following / genesis**: `eth_getBlockReceipts` → filter `topic0` in-memory
 
-### Lỗi thường gặp
+Event listen config lives in `evm_event_signatures`.
 
-| Thông báo | Nguyên nhân / cách xử lý |
-|-----------|---------------------------|
-| `no active contracts to index` | Chưa seed, hoặc `MONGODB_DATABASE` indexer khác DB đã seed, hoặc không có contract `active`. |
-| Không kết nối được MongoDB | Kiểm tra `MONGODB_URI`, MongoDB đã `docker compose up`. |
+### Common errors
 
-## Biến môi trường
+| Message | Fix |
+|---------|-----|
+| `no active contracts with evm_event_signatures` | Run `seed-pg` or enable contract/event rows. |
+| `scan_enabled is false` | `UPDATE indexer_config SET value = 'true' WHERE key = 'scan_enabled'`. |
+| Cannot connect to PostgreSQL | Check `POSTGRES_DSN`, `docker compose up -d postgres`. |
 
-| Biến | Mặc định | Mô tả |
-|------|----------|--------|
-| `CHAIN_TYPE` | `evm` | Loại chain (hiện tại: `evm`). |
-| `CHAIN_NAME` | cùng `CHAIN_TYPE` | Tên hiển thị trong log (ví dụ `base`, `sepolia`). |
-| `POLL_INTERVAL` | theo `CHAIN_TYPE` | Chu kỳ poll block (ví dụ `12s`, `2s`, `400ms`). Ghi đè nếu set. |
-| `MONGODB_URI` | `mongodb://localhost:27017` | Chuỗi kết nối MongoDB. |
-| `MONGODB_DATABASE` | `indexing` | **Tên database** — phải trùng giữa seed và indexer. |
+## Environment variables
 
-**Poll mặc định theo `CHAIN_TYPE`:** EVM `12s`, Solana `400ms`, Tron `3s`, Sui `1s` (các loại sau khi được triển khai).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHAIN_NAME` | `evm` | Label in logs. |
+| `POSTGRES_DSN` | `postgres://indexer:indexer@localhost:5432/indexing?sslmode=disable` | PostgreSQL DSN. |
+| `INDEXER_BLOCK_BATCH_SIZE` | `100` | Catch-up batch (`eth_getLogs`). Auto-halves on RPC errors. |
+| `INDEXER_TIP_FOLLOWING_ENABLED` | `true` | Tip-following via `eth_getBlockReceipts`. |
+| `INDEXER_RETRY_AFTER_RECEIPTS_NULL` | `1s` | Retry when receipts are not ready yet. |
+| `WEBHOOK_URL` / `WEBHOOK_SECRET` | — | Consumer webhook. |
+| `CONSUMER_ID` | `consumer-1` | Consumer worker ID. |
 
-Indexer dùng **RPC pool**: lần lượt thử các URL trong `network.rpc_urls` khi lỗi.
+The indexer uses an **RPC pool**: it tries `network.rpc_urls` in order on failure.
 
-## Triển khai multi-chain
+## Multi-chain deployment
 
-Ý tưởng: **mỗi chain = một database MongoDB + một tiến trình (hoặc một container) indexer** với env tương ứng.
+Each chain = separate PostgreSQL database (or cluster) + one indexer process.
 
-1. **Chuẩn bị seed**  
-   - Mỗi chain một file JSON trong `cmd/seed/data/` (đã có ví dụ `sepolia.json`, `base.json`).  
-   - `network.chain_id` phải đúng chain; `contracts` khai báo `address`, `abi`, `events`, `start_block`.
+```bash
+# Base
+POSTGRES_DSN=postgres://.../indexing_base go run ./cmd/seed-pg --config cmd/seed/data/base.json
+POSTGRES_DSN=postgres://.../indexing_base CHAIN_NAME=base go run ./cmd/indexer/main.go
 
-2. **Seed từng chain vào DB riêng**
+# Sepolia
+POSTGRES_DSN=postgres://.../indexing_sepolia go run ./cmd/seed-pg --config cmd/seed/data/sepolia.json
+POSTGRES_DSN=postgres://.../indexing_sepolia CHAIN_NAME=sepolia go run ./cmd/indexer/main.go
+```
 
-   ```bash
-   MONGODB_DATABASE=indexing_base go run cmd/seed/main.go --config cmd/seed/data/base.json
-   MONGODB_DATABASE=indexing_sepolia go run cmd/seed/main.go --config cmd/seed/data/sepolia.json
-   ```
+## Add a new EVM contract
 
-3. **Chạy một indexer cho mỗi chain** (terminal riêng, systemd unit riêng, hoặc replica Kubernetes/Docker):
-
-   ```bash
-   # Terminal 1 — Base
-   CHAIN_TYPE=evm CHAIN_NAME=base MONGODB_DATABASE=indexing_base POLL_INTERVAL=2s go run cmd/indexer/main.go
-
-   # Terminal 2 — Sepolia
-   CHAIN_TYPE=evm CHAIN_NAME=sepolia MONGODB_DATABASE=indexing_sepolia go run cmd/indexer/main.go
-   ```
-
-4. **Production**  
-   - Build một binary: `go build -o indexer ./cmd/indexer`.  
-   - Deploy N bản copy với N file env hoặc N biến môi trường (mỗi service một `MONGODB_DATABASE` + `CHAIN_NAME` + `POLL_INTERVAL` nếu cần).  
-   - Một MongoDB cluster có thể host nhiều database; backup/scale theo từng `MONGODB_DATABASE` nếu cần.
-
-**Không** cần đổi code để thêm chain EVM mới: thêm JSON seed + process mới với `MONGODB_DATABASE` riêng.
-
-## Thêm chain / contract mới
-
-1. Tạo `cmd/seed/data/<chain>.json` theo mẫu:
+1. Edit JSON in `cmd/seed/data/`.
+2. `go run ./cmd/seed-pg --config ...` (upserts contract + `evm_event_signatures`).
+3. Restart indexer.
 
 ```json
 {
-  "network": {
-    "name": "Tên hiển thị",
-    "chain_type": "evm",
-    "chain_id": 1,
-    "rpc_urls": ["https://..."],
-    "type": "mainnet",
-    "status": "active"
-  },
-  "contracts": [
-    {
-      "address": "0x...",
-      "abi": [],
-      "events": ["Transfer(address,address,uint256)"],
-      "start_block": 12345678
-    }
-  ]
+  "network": { "name": "...", "chain_type": "evm", "chain_id": 8453, "rpc_urls": ["https://..."], "type": "mainnet", "status": "active" },
+  "contracts": [{
+    "address": "0x...",
+    "abi": [],
+    "events": ["Transfer(address,address,uint256)"],
+    "start_block": 12345678
+  }]
 }
 ```
 
-2. Seed với đúng `MONGODB_DATABASE`.  
-3. Chạy indexer với cùng `MONGODB_DATABASE`.
-
-Event cần index được khai báo trong `events` (chuỗi canonical giống Solidity). Handler mặc định lưu raw log và decode theo ABI vào collection `decoded_events`.
-
-## Cấu trúc thư mục
+## Layout
 
 ```
 cmd/
-  indexer/          # Entry point indexer
-  seed/             # Seed MongoDB
-    data/           # JSON theo từng chain
+  indexer/          # EVM block indexer entry point
+  seed-pg/          # Seed PostgreSQL from JSON
+  seed/data/        # Per-chain seed JSON
+  migrate/          # Goose migrations
+  consumer/         # Outbox → webhook
 internal/
-  core/             # Interface, Registry, kiểu chung
-  chains/evm/       # RPC pool, subscriber, fetcher, storage EVM
-  config/           # Đọc env
-  handlers/         # Handler mặc định (lưu log + decode)
-  pipeline/         # Pipeline index block
-  models/
-  storage/          # MongoDB (nếu dùng)
-pkg/utils/          # Decode ABI, topic0, ...
+  chains/evm/       # Block indexer, RPC pool, log processor
+  storage/postgres/ # PostgreSQL store
+migrations/         # SQL schema
 ```
 
 ## Test

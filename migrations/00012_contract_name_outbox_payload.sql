@@ -1,0 +1,14 @@
+-- +goose Up
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE outbox
+    ADD COLUMN IF NOT EXISTS topic TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_outbox_topic ON outbox (topic);
+
+-- +goose Down
+DROP INDEX IF EXISTS idx_outbox_topic;
+ALTER TABLE outbox DROP COLUMN IF EXISTS payload;
+ALTER TABLE outbox DROP COLUMN IF EXISTS topic;
+ALTER TABLE contracts DROP COLUMN IF EXISTS name;

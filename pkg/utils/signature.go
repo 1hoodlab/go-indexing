@@ -2,9 +2,18 @@ package utils
 
 import (
 	"encoding/hex"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+// EventNameFromSignature returns the name before '('.
+func EventNameFromSignature(canonical string) string {
+	if i := strings.Index(canonical, "("); i > 0 {
+		return canonical[:i]
+	}
+	return canonical
+}
 
 // EventTopic0 returns the topic0 (event signature hash) for a canonical event string.
 // Canonical format: EventName(type1,type2,...) with no spaces.

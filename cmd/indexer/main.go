@@ -3,155 +3,48 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/1hoodlab/go-indexing.git/internal/chains/evm"
-	solanachain "github.com/1hoodlab/go-indexing.git/internal/chains/solana"
 	"github.com/1hoodlab/go-indexing.git/internal/config"
-	"github.com/1hoodlab/go-indexing.git/internal/core"
-	"github.com/1hoodlab/go-indexing.git/internal/handlers"
-	"github.com/1hoodlab/go-indexing.git/internal/pipeline"
+	"github.com/1hoodlab/go-indexing.git/internal/storage/postgres"
 )
 
 func main() {
 	cfg := config.Load()
 
-	switch cfg.ChainType {
-	case "evm":
-		runEVM(cfg)
-	case "solana":
-		runSolana(cfg)
-	default:
-		log.Fatalf("unsupported chain type: %s", cfg.ChainType)
-	}
-}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-func runEVM(cfg config.Config) {
-	store, err := evm.NewStorage(cfg.MongoURI, cfg.Database)
+	store, err := postgres.New(ctx, cfg.PostgresDSN)
 	if err != nil {
-		log.Fatalf("failed to connect to MongoDB: %v", err)
+		log.Fatalf("failed to connect to PostgreSQL: %v", err)
 	}
-	defer store.Close(context.Background())
+	defer store.Close()
 
-	if err := store.EnsureIndexes(context.Background()); err != nil {
-		log.Fatalf("failed to ensure indexes: %v", err)
-	}
-
-	contracts, err := store.LoadContracts(context.Background())
+	runtimeCfg, err := store.LoadIndexerRuntimeConfig(ctx)
 	if err != nil {
-		log.Fatalf("failed to load contracts: %v", err)
+		log.Fatalf("failed to load indexer config: %v", err)
 	}
-	if len(contracts) == 0 {
-		log.Fatal("no active contracts to index")
+	if len(runtimeCfg.RPCURLs) == 0 {
+		log.Fatal("network has no rpc_urls configured")
 	}
-
-	contractModels, err := store.LoadContractModels(context.Background())
-	if err != nil {
-		log.Fatalf("failed to load contract models: %v", err)
+	if len(runtimeCfg.ContractEvents) == 0 {
+		log.Fatal("no active contracts with evm_event_signatures")
 	}
-
-	// Load network from DB (contains RPC URLs)
-	network, err := store.LoadNetwork(context.Background())
-	if err != nil {
-		log.Fatalf("failed to load network: %v", err)
-	}
-	if len(network.RPCURLs) == 0 {
-		log.Fatal("network has no RPC URLs configured in database")
+	if !runtimeCfg.ScanEnabled {
+		log.Printf("scan_enabled=false — indexer idle until enabled in indexer_config")
 	}
 
-	networkID := network.ID.Hex()
-
-	// Create RPC pool with fallback
-	pool, err := evm.NewRPCPool(network.RPCURLs)
+	pool, err := evm.NewRPCPool(runtimeCfg.RPCURLs)
 	if err != nil {
 		log.Fatalf("failed to create RPC pool: %v", err)
 	}
 
-	subscriber := evm.NewSubscriber(pool, cfg.PollInterval)
-	fetcher := evm.NewLogFetcher(pool, networkID, contractModels)
-
-	registry := core.NewRegistry(handlers.SaveToLogs(store))
-
-	p := pipeline.New(cfg.ChainName, subscriber, fetcher, registry, store, contracts)
-	if err := p.Start(); err != nil {
-		log.Fatalf("failed to start pipeline: %v", err)
+	indexer := evm.NewBlockIndexer(cfg, store, runtimeCfg, pool)
+	log.Printf("[%s] evm indexer started (rpc=%s, checkpoint=%d)", cfg.ChainName, pool.ActiveURL(), runtimeCfg.Checkpoint)
+	if err := indexer.Run(ctx); err != nil && err != context.Canceled {
+		log.Fatalf("indexer error: %v", err)
 	}
-	defer p.Stop()
-
-	log.Printf("[%s] blockchain indexer started (chain_type=%s, rpc=%s)", cfg.ChainName, cfg.ChainType, pool.ActiveURL())
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	log.Println("shutting down...")
-}
-
-func runSolana(cfg config.Config) {
-	store, err := solanachain.NewStorage(cfg.MongoURI, cfg.Database)
-	if err != nil {
-		log.Fatalf("solana: failed to connect to MongoDB: %v", err)
-	}
-	defer store.Close(context.Background())
-
-	if err := store.EnsureIndexes(context.Background()); err != nil {
-		log.Fatalf("solana: failed to ensure indexes: %v", err)
-	}
-
-	contracts, err := store.LoadContracts(context.Background())
-	if err != nil {
-		log.Fatalf("solana: failed to load contracts: %v", err)
-	}
-	if len(contracts) == 0 {
-		log.Fatal("solana: no active programs to index")
-	}
-
-	programModels, err := store.LoadProgramModels(context.Background())
-	if err != nil {
-		log.Fatalf("solana: failed to load program models: %v", err)
-	}
-
-	network, err := store.LoadNetwork(context.Background())
-	if err != nil {
-		log.Fatalf("solana: failed to load network: %v", err)
-	}
-	if len(network.RPCURLs) == 0 {
-		log.Fatal("solana: network has no RPC URLs configured in database")
-	}
-
-	pool, err := solanachain.NewRPCPool(network.RPCURLs)
-	if err != nil {
-		log.Fatalf("solana: failed to create RPC pool: %v", err)
-	}
-
-	networkID := network.ID.Hex()
-	programMap := make(map[string]solanachain.ProgramInfoExport, len(programModels))
-	for _, prog := range programModels {
-		programMap[prog.Address] = solanachain.ProgramInfoExport{
-			ID:  prog.ID.Hex(),
-			IDL: prog.IDL,
-		}
-	}
-
-	subscriber := solanachain.NewSubscriber(pool, cfg.PollInterval)
-	fetcher := solanachain.NewLogFetcherFromExport(pool, networkID, programMap)
-	parser := solanachain.NewEventParser()
-	handler := solanachain.DefaultHandler(store, parser)
-
-	registry := core.NewRegistry(handler)
-
-	p := pipeline.New(cfg.ChainName, subscriber, fetcher, registry, store, contracts)
-	if err := p.Start(); err != nil {
-		log.Fatalf("solana: failed to start pipeline: %v", err)
-	}
-	defer p.Stop()
-
-	log.Printf("[%s] solana indexer started (rpc=%s)", cfg.ChainName, pool.ActiveURL())
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-	log.Println("shutting down...")
 }
