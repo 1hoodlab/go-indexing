@@ -13,9 +13,20 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
+// IndexerStore is the subset of postgres.Store the block indexer depends on.
+type IndexerStore interface {
+	LoadIndexerRuntimeConfig(ctx context.Context) (*postgres.IndexerRuntimeConfig, error)
+	ConfirmPendingBlocks(ctx context.Context, networkID int64, confirmedHead uint64) (int, error)
+	PersistBlock(ctx context.Context, networkID, chainID int64, block postgres.BlockRow, logs []postgres.LogInsert, enqueueOutbox bool, nextCheckpoint uint64) (*postgres.PersistBlockResult, error)
+	PersistCatchupBatch(ctx context.Context, networkID, chainID int64, logs []postgres.LogInsert, enqueueOutbox bool, nextCheckpoint uint64) ([]int64, error)
+	GetBlockByNumber(ctx context.Context, networkID int64, blockNumber uint64) (*postgres.BlockRow, error)
+	DeleteBlockByHash(ctx context.Context, networkID int64, blockHash string) error
+	SetCheckpoint(ctx context.Context, networkID int64, block uint64) error
+}
+
 type BlockIndexer struct {
 	cfg          config.Config
-	store        *postgres.Store
+	store        IndexerStore
 	runtime      *postgres.IndexerRuntimeConfig
 	pool         *RPCPool
 	blockFetcher *BlockFetcher
@@ -23,7 +34,7 @@ type BlockIndexer struct {
 	processor    *LogProcessor
 }
 
-func NewBlockIndexer(cfg config.Config, store *postgres.Store, runtime *postgres.IndexerRuntimeConfig, pool *RPCPool) *BlockIndexer {
+func NewBlockIndexer(cfg config.Config, store IndexerStore, runtime *postgres.IndexerRuntimeConfig, pool *RPCPool) *BlockIndexer {
 	contractIDByAddr := make(map[string]int64)
 	abiByAddr := make(map[string][]byte)
 	for _, ev := range runtime.ContractEvents {
@@ -105,7 +116,7 @@ func (b *BlockIndexer) Run(ctx context.Context) error {
 			continue
 		}
 
-		if confirmedHead > checkpoint {
+		if confirmedHead >= checkpoint {
 			if err := b.processCatchup(ctx, checkpoint, confirmedHead); err != nil {
 				log.Printf("catchup error: %v", err)
 				time.Sleep(b.cfg.RetryAfterFailed)
@@ -135,8 +146,9 @@ func (b *BlockIndexer) processGenesis(ctx context.Context, head *types.Header, c
 	return b.persistSingleBlockHeader(ctx, head, logs, head.Number.Uint64(), enqueue)
 }
 
+// processCatchup scans [checkpoint, confirmedHead]; the checkpoint is the next block to scan.
 func (b *BlockIndexer) processCatchup(ctx context.Context, checkpoint, confirmedHead uint64) error {
-	from := checkpoint + 1
+	from := checkpoint
 	batchSize := b.cfg.BlockBatchSize
 	if batchSize == 0 {
 		batchSize = 100
@@ -185,8 +197,9 @@ func (b *BlockIndexer) processCatchup(ctx context.Context, checkpoint, confirmed
 	return nil
 }
 
+// processTip indexes the block at the checkpoint (the next block to scan).
 func (b *BlockIndexer) processTip(ctx context.Context, checkpoint uint64, head *types.Header) error {
-	next := checkpoint + 1
+	next := checkpoint
 	if head.Number.Uint64() < next {
 		time.Sleep(b.cfg.NewBlockWaitingTime)
 		return nil
@@ -198,14 +211,14 @@ func (b *BlockIndexer) processTip(ctx context.Context, checkpoint uint64, head *
 		return err
 	}
 
-	existing, err := b.store.GetBlockByNumber(ctx, b.runtime.NetworkID, checkpoint)
+	existing, err := b.store.GetBlockByNumber(ctx, b.runtime.NetworkID, next-1)
 	if err == nil && existing != nil {
 		if existing.BlockHash != blockHeader.ParentHash.Hex() {
 			log.Printf("reorg at %d: expected parent %s got %s", next, existing.BlockHash, blockHeader.ParentHash.Hex())
 			if err := b.store.DeleteBlockByHash(ctx, b.runtime.NetworkID, existing.BlockHash); err != nil {
 				return err
 			}
-			if err := b.store.SetCheckpoint(ctx, b.runtime.NetworkID, checkpoint-1); err != nil {
+			if err := b.store.SetCheckpoint(ctx, b.runtime.NetworkID, next-1); err != nil {
 				return err
 			}
 			return nil

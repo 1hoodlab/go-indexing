@@ -110,10 +110,22 @@ func (s *Store) enqueueOutboxTx(ctx context.Context, tx pgx.Tx, logID int64) err
 	if err != nil {
 		return err
 	}
+	// A cancelled row (from a reorg) is revived so the canonical version of the
+	// event gets delivered; pending/processing/delivered rows are left untouched.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO outbox (log_id, status, topic, payload)
-		SELECT $1, 'pending', $2, $3::jsonb
-		WHERE NOT EXISTS (SELECT 1 FROM outbox WHERE log_id = $1)`,
+		VALUES ($1, 'pending', $2, $3::jsonb)
+		ON CONFLICT (log_id) DO UPDATE SET
+			status = 'pending',
+			topic = EXCLUDED.topic,
+			payload = EXCLUDED.payload,
+			attempts = 0,
+			next_retry_at = now(),
+			locked_at = NULL,
+			locked_by = NULL,
+			last_error = NULL,
+			delivered_at = NULL
+		WHERE outbox.status = 'cancelled'`,
 		logID, topic, payloadJSON,
 	)
 	return err

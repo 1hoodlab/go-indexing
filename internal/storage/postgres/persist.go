@@ -204,7 +204,19 @@ func (s *Store) PersistBlock(
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15::jsonb, $16::log_status
 			)
-			ON CONFLICT (chain_id, block_number, transaction_hash, log_index) DO NOTHING
+			ON CONFLICT (chain_id, block_number, transaction_hash, log_index) DO UPDATE SET
+				block_id = EXCLUDED.block_id,
+				block_hash = EXCLUDED.block_hash,
+				block_timestamp = EXCLUDED.block_timestamp,
+				contract_id = EXCLUDED.contract_id,
+				contract_address = EXCLUDED.contract_address,
+				transaction_index = EXCLUDED.transaction_index,
+				event_name = EXCLUDED.event_name,
+				topics = EXCLUDED.topics,
+				data = EXCLUDED.data,
+				decoded_params = EXCLUDED.decoded_params,
+				status = EXCLUDED.status
+			WHERE eth_logs.status = 'orphaned'
 			RETURNING id`,
 			blockID, networkID, chainID, log.ContractID, log.ContractAddress,
 			log.BlockNumber, log.BlockHash, log.BlockTimestamp, log.TransactionHash,
@@ -297,7 +309,19 @@ func (s *Store) PersistCatchupBatch(
 			) VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15::jsonb, 'confirmed'
 			)
-			ON CONFLICT (chain_id, block_number, transaction_hash, log_index) DO NOTHING
+			ON CONFLICT (chain_id, block_number, transaction_hash, log_index) DO UPDATE SET
+				block_id = EXCLUDED.block_id,
+				block_hash = EXCLUDED.block_hash,
+				block_timestamp = EXCLUDED.block_timestamp,
+				contract_id = EXCLUDED.contract_id,
+				contract_address = EXCLUDED.contract_address,
+				transaction_index = EXCLUDED.transaction_index,
+				event_name = EXCLUDED.event_name,
+				topics = EXCLUDED.topics,
+				data = EXCLUDED.data,
+				decoded_params = EXCLUDED.decoded_params,
+				status = EXCLUDED.status
+			WHERE eth_logs.status = 'orphaned'
 			RETURNING id`,
 			blockID, networkID, chainID, log.ContractID, log.ContractAddress,
 			log.BlockNumber, log.BlockHash, log.BlockTimestamp, log.TransactionHash,
