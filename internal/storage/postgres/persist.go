@@ -75,35 +75,7 @@ func upsertBlockTx(
 	if err != nil {
 		return 0, fmt.Errorf("upsert block: %w", err)
 	}
-	if err := linkParentBlockTx(ctx, tx, networkID, blockID); err != nil {
-		return 0, err
-	}
 	return blockID, nil
-}
-
-func linkParentBlockTx(ctx context.Context, tx pgx.Tx, networkID, blockID int64) error {
-	_, err := tx.Exec(ctx, `
-		UPDATE blocks child
-		SET parent_block_id = parent.id
-		FROM blocks parent
-		WHERE child.id = $1
-		  AND child.network_id = $2
-		  AND child.parent_hash IS NOT NULL
-		  AND child.parent_hash = parent.block_hash
-		  AND parent.network_id = child.network_id
-		  AND child.parent_block_id IS NULL`,
-		blockID, networkID,
-	)
-	return err
-}
-
-func linkPendingParentBlocksTx(ctx context.Context, tx pgx.Tx, networkID int64, blockIDs []int64) error {
-	for _, blockID := range blockIDs {
-		if err := linkParentBlockTx(ctx, tx, networkID, blockID); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *Store) GetBlockByNumber(ctx context.Context, networkID int64, blockNumber uint64) (*BlockRow, error) {
@@ -275,7 +247,6 @@ func (s *Store) PersistCatchupBatch(
 
 	var logIDs []int64
 	blockCache := make(map[string]int64) // block_hash -> block_id
-	var blockIDs []int64
 
 	for _, log := range logs {
 		blockID, ok := blockCache[log.BlockHash]
@@ -285,7 +256,6 @@ func (s *Store) PersistCatchupBatch(
 				return nil, err
 			}
 			blockCache[log.BlockHash] = blockID
-			blockIDs = append(blockIDs, blockID)
 		}
 
 		topicsJSON, err := json.Marshal(log.Topics)
@@ -340,10 +310,6 @@ func (s *Store) PersistCatchupBatch(
 				return nil, fmt.Errorf("enqueue outbox: %w", err)
 			}
 		}
-	}
-
-	if err := linkPendingParentBlocksTx(ctx, tx, networkID, blockIDs); err != nil {
-		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `

@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:16
@@ -16,6 +14,43 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # One-shot: áp dụng migration rồi thoát; indexer/consumer chỉ start khi job này thành công.
+  migrate:
+    build: .
+    command: ["/app/migrate", "-dir", "/app/migrations", "up"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DSN: postgres://indexer:indexer@postgres:5432/indexing?sslmode=disable
+
+  indexer:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      CHAIN_NAME: ${CHAIN_NAME:-base}
+      POSTGRES_DSN: postgres://indexer:indexer@postgres:5432/indexing?sslmode=disable
+      INDEXER_BLOCK_BATCH_SIZE: ${INDEXER_BLOCK_BATCH_SIZE:-100}
+      INDEXER_TIP_FOLLOWING_ENABLED: ${INDEXER_TIP_FOLLOWING_ENABLED:-true}
+
+  # Webhook consumer — bật khi đã cấu hình WEBHOOK_URL/WEBHOOK_SECRET trong .env
+  # consumer:
+  #   build: .
+  #   command: ["/app/consumer"]
+  #   restart: unless-stopped
+  #   depends_on:
+  #     migrate:
+  #       condition: service_completed_successfully
+  #   environment:
+  #     POSTGRES_DSN: postgres://indexer:indexer@postgres:5432/indexing?sslmode=disable
+  #     WEBHOOK_URL: ${WEBHOOK_URL}
+  #     WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+  #     CONSUMER_ID: ${CONSUMER_ID:-consumer-1}
 
 volumes:
   postgres_data:
