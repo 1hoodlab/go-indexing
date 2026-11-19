@@ -51,8 +51,12 @@ func upsertBlockTx(
 	timestamp time.Time,
 	status string,
 ) (int64, error) {
-	blockHash = strings.ToLower(blockHash)
-	parentHash = strings.ToLower(parentHash)
+	if strings.HasPrefix(blockHash, "0x") {
+		blockHash = strings.ToLower(blockHash)
+	}
+	if strings.HasPrefix(parentHash, "0x") {
+		parentHash = strings.ToLower(parentHash)
+	}
 	var blockID int64
 	err := tx.QueryRow(ctx, `
 		INSERT INTO blocks (network_id, chain_id, block_number, block_hash, parent_hash,

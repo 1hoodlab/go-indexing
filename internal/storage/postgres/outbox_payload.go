@@ -113,9 +113,9 @@ func (s *Store) enqueueOutboxTx(ctx context.Context, tx pgx.Tx, logID int64) err
 	// A cancelled row (from a reorg) is revived so the canonical version of the
 	// event gets delivered; pending/processing/delivered rows are left untouched.
 	_, err = tx.Exec(ctx, `
-		INSERT INTO outbox (log_id, status, topic, payload)
-		VALUES ($1, 'pending', $2, $3::jsonb)
-		ON CONFLICT (log_id) DO UPDATE SET
+		INSERT INTO outbox (log_id, log_source, status, topic, payload)
+		VALUES ($1, 'eth', 'pending', $2, $3::jsonb)
+		ON CONFLICT (log_id, log_source) DO UPDATE SET
 			status = 'pending',
 			topic = EXCLUDED.topic,
 			payload = EXCLUDED.payload,

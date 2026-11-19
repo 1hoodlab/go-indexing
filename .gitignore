@@ -36,3 +36,4 @@ logs/
 
 .codegraph
 .cursor
+graphify-out/

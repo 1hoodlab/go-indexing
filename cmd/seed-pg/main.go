@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/1hoodlab/go-indexing.git/internal/chains/solana"
 	"github.com/1hoodlab/go-indexing.git/internal/config"
 	"github.com/1hoodlab/go-indexing.git/internal/storage/postgres"
 	"github.com/1hoodlab/go-indexing.git/pkg/utils"
@@ -32,6 +33,7 @@ type seedContract struct {
 	Name       string          `json:"name"`
 	Address    string          `json:"address"`
 	ABI        json.RawMessage `json:"abi,omitempty"`
+	IDL        json.RawMessage `json:"idl,omitempty"`
 	Events     []string        `json:"events"`
 	StartBlock uint64          `json:"start_block"`
 }
@@ -96,24 +98,50 @@ func main() {
 		log.Fatalf("config confirmation_depth: %v", err)
 	}
 
+	isSolana := seed.Network.ChainType == "solana"
+
 	for _, c := range seed.Contracts {
-		addr := strings.ToLower(c.Address)
-		contractID, err := store.UpsertContract(ctx, networkID, c.Name, addr, c.ABI)
+		addr := c.Address
+		if !isSolana {
+			addr = strings.ToLower(addr)
+		}
+
+		abi := c.ABI
+		if isSolana && len(c.IDL) > 0 {
+			abi = c.IDL
+		}
+
+		contractID, err := store.UpsertContract(ctx, networkID, c.Name, addr, abi)
 		if err != nil {
 			log.Fatalf("upsert contract %s: %v", addr, err)
 		}
-		var sigs []postgres.EventSignatureInput
-		for _, eventSig := range c.Events {
-			sigs = append(sigs, postgres.EventSignatureInput{
-				EventName: utils.EventNameFromSignature(eventSig),
-				Signature: eventSig,
-				Topic0:    utils.EventTopic0(eventSig),
-			})
+
+		if isSolana {
+			var configs []postgres.SolanaEventConfigInput
+			for _, eventName := range c.Events {
+				configs = append(configs, postgres.SolanaEventConfigInput{
+					EventName:     eventName,
+					Discriminator: solana.ComputeDiscriminator(eventName),
+				})
+			}
+			if err := store.BulkInsertSolanaEventConfigs(ctx, contractID, configs); err != nil {
+				log.Fatalf("insert solana event configs %s: %v", addr, err)
+			}
+			log.Printf("seeded program %s with %d events", addr, len(configs))
+		} else {
+			var sigs []postgres.EventSignatureInput
+			for _, eventSig := range c.Events {
+				sigs = append(sigs, postgres.EventSignatureInput{
+					EventName: utils.EventNameFromSignature(eventSig),
+					Signature: eventSig,
+					Topic0:    utils.EventTopic0(eventSig),
+				})
+			}
+			if err := store.BulkInsertEventSignatures(ctx, contractID, sigs); err != nil {
+				log.Fatalf("insert signatures %s: %v", addr, err)
+			}
+			log.Printf("seeded contract %s with %d events", addr, len(sigs))
 		}
-		if err := store.BulkInsertEventSignatures(ctx, contractID, sigs); err != nil {
-			log.Fatalf("insert signatures %s: %v", addr, err)
-		}
-		log.Printf("seeded contract %s with %d events", addr, len(sigs))
 	}
 
 	log.Printf("seed complete: network_id=%d checkpoint=%d", networkID, checkpoint)
