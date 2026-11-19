@@ -3,13 +3,11 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
 func (s *Store) UpsertContract(ctx context.Context, networkID int64, name, address string, abi json.RawMessage) (int64, error) {
-	address = strings.ToLower(address)
 	var id int64
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO contracts (network_id, name, address, abi, status, updated_at)

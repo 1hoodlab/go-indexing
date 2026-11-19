@@ -9,6 +9,7 @@ import (
 )
 
 type Config struct {
+	ChainType string
 	ChainName string
 	PostgresDSN string
 
@@ -29,6 +30,7 @@ func Load() Config {
 	godotenv.Load()
 
 	return Config{
+		ChainType:    getenv("CHAIN_TYPE", "evm"),
 		ChainName:    getenv("CHAIN_NAME", "evm"),
 		PostgresDSN:  getenv("POSTGRES_DSN", "postgres://indexer:indexer@localhost:5432/indexing?sslmode=disable"),
 
